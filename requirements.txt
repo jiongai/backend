@@ -5,6 +5,5 @@ httpx
 edge-tts
 elevenlabs
 pydub
-audioop-lts
 dirtyjson
 

@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
+  ],
+  "env": {
+    "OPENROUTER_API_KEY": "@openrouter_api_key",
+    "ELEVENLABS_API_KEY": "@elevenlabs_api_key"
+  },
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300
+    }
+  }
+}
+
