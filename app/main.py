@@ -11,6 +11,29 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+# ========================================
+# Configure ffmpeg for Vercel/Serverless
+# ========================================
+# Must be done before importing pydub
+if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+    # Running on Vercel or serverless environment
+    vendor_dir = Path(__file__).parent.parent / "vendor"
+    ffmpeg_path = vendor_dir / "ffmpeg"
+    
+    if ffmpeg_path.exists():
+        print(f"✅ Using vendored ffmpeg: {ffmpeg_path}")
+        from pydub import AudioSegment
+        AudioSegment.converter = str(ffmpeg_path)
+        AudioSegment.ffmpeg = str(ffmpeg_path)
+        AudioSegment.ffprobe = str(ffmpeg_path)
+    else:
+        print(f"⚠️  Vendored ffmpeg not found: {ffmpeg_path}")
+        print(f"⚠️  Looking in: {vendor_dir}")
+        print(f"⚠️  Audio processing may fail!")
+else:
+    print("ℹ️  Running locally, using system ffmpeg")
+# ========================================
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
