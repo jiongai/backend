@@ -3,10 +3,6 @@
     "api/**/*.py": {
       "maxDuration": 300
     }
-  },
-  "env": {
-    "OPENROUTER_API_KEY": "@openrouter_api_key",
-    "ELEVENLABS_API_KEY": "@elevenlabs_api_key"
   }
 }
 
