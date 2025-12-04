@@ -54,34 +54,24 @@ backend/
 
 ```json
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 300
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/index.py"
-    }
-  ],
+  },
   "env": {
     "OPENROUTER_API_KEY": "@openrouter_api_key",
     "ELEVENLABS_API_KEY": "@elevenlabs_api_key"
-  },
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 300
-    }
   }
 }
 ```
 
 **说明**:
 - `maxDuration: 300` - 音频生成可能需要较长时间（最多 5 分钟）
+- `api/**/*.py` - 匹配所有 API 目录下的 Python 文件
 - 环境变量使用 Vercel Secrets（需要在 Vercel 控制台配置）
+- Vercel 自动检测 `api/` 目录并创建 serverless functions
+- 移除了 `builds` 和 `routes`（与 `functions` 冲突）
 
 ### 2. `runtime.txt`
 

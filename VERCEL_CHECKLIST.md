@@ -47,20 +47,21 @@ audioop-lts; python_version >= "3.13"  # ✅ 环境标记
 **vercel.json**:
 ```json
 {
-  "version": 2,
-  "builds": [{"src": "api/index.py", "use": "@vercel/python"}],
-  "routes": [{"src": "/(.*)", "dest": "api/index.py"}],
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 300  // ✅ 5 分钟超时
+    }
+  },
   "env": {
     "OPENROUTER_API_KEY": "@openrouter_api_key",
     "ELEVENLABS_API_KEY": "@elevenlabs_api_key"
-  },
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 300  // ✅ 5 分钟超时
-    }
   }
 }
 ```
+
+**注意**: 
+- 移除了 `builds` 和 `routes`（与 `functions` 冲突）
+- Vercel 自动检测 `api/` 目录
 
 ### 4. 环境变量 ⚠️ 需要配置
 
