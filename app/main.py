@@ -14,24 +14,24 @@ from typing import Optional
 # ========================================
 # Configure ffmpeg for Vercel/Serverless
 # ========================================
-# Must be done before importing pydub
+# Note: Main configuration is in post_production.py
+# This is kept as backup/fallback
 if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-    # Running on Vercel or serverless environment
-    vendor_dir = Path(__file__).parent.parent / "vendor"
-    ffmpeg_path = vendor_dir / "ffmpeg"
+    # Try api/vendor first (Vercel), then root vendor (local)
+    api_vendor_dir = Path(__file__).parent.parent / "api" / "vendor"
+    root_vendor_dir = Path(__file__).parent.parent / "vendor"
     
-    if ffmpeg_path.exists():
-        print(f"✅ Using vendored ffmpeg: {ffmpeg_path}")
-        from pydub import AudioSegment
-        AudioSegment.converter = str(ffmpeg_path)
-        AudioSegment.ffmpeg = str(ffmpeg_path)
-        AudioSegment.ffprobe = str(ffmpeg_path)
+    ffmpeg_path = None
+    if (api_vendor_dir / "ffmpeg").exists():
+        ffmpeg_path = api_vendor_dir / "ffmpeg"
+        print(f"✅ [main] Found ffmpeg in api/vendor: {ffmpeg_path}")
+    elif (root_vendor_dir / "ffmpeg").exists():
+        ffmpeg_path = root_vendor_dir / "ffmpeg"
+        print(f"✅ [main] Found ffmpeg in root vendor: {ffmpeg_path}")
     else:
-        print(f"⚠️  Vendored ffmpeg not found: {ffmpeg_path}")
-        print(f"⚠️  Looking in: {vendor_dir}")
-        print(f"⚠️  Audio processing may fail!")
+        print(f"⚠️  [main] ffmpeg not found in {api_vendor_dir} or {root_vendor_dir}")
 else:
-    print("ℹ️  Running locally, using system ffmpeg")
+    print("ℹ️  [main] Running locally, using system ffmpeg")
 # ========================================
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header

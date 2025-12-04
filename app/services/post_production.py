@@ -13,16 +13,24 @@ from pydub import AudioSegment
 # ========================================
 # Must configure immediately after importing pydub
 if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-    vendor_dir = Path(__file__).parent.parent.parent / "vendor"
-    ffmpeg_path = vendor_dir / "ffmpeg"
+    # Try api/vendor first (Vercel deployment), then root vendor (local)
+    api_vendor_dir = Path(__file__).parent.parent.parent / "api" / "vendor"
+    root_vendor_dir = Path(__file__).parent.parent.parent / "vendor"
     
-    if ffmpeg_path.exists():
+    ffmpeg_path = None
+    if (api_vendor_dir / "ffmpeg").exists():
+        ffmpeg_path = api_vendor_dir / "ffmpeg"
+    elif (root_vendor_dir / "ffmpeg").exists():
+        ffmpeg_path = root_vendor_dir / "ffmpeg"
+    
+    if ffmpeg_path:
         AudioSegment.converter = str(ffmpeg_path)
         AudioSegment.ffmpeg = str(ffmpeg_path)
         AudioSegment.ffprobe = str(ffmpeg_path)
         print(f"✅ [post_production] Configured ffmpeg: {ffmpeg_path}")
     else:
-        print(f"⚠️  [post_production] ffmpeg not found at: {ffmpeg_path}")
+        print(f"⚠️  [post_production] ffmpeg not found")
+        print(f"⚠️  [post_production] Searched: {api_vendor_dir}, {root_vendor_dir}")
         print(f"⚠️  [post_production] Audio processing may fail!")
 else:
     print("ℹ️  [post_production] Using system ffmpeg")
