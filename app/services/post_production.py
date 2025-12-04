@@ -12,16 +12,37 @@ from pydub import AudioSegment
 # Configure ffmpeg for Vercel/Serverless
 # ========================================
 # Must configure immediately after importing pydub
+print(f"🔍 [post_production] __file__ = {__file__}")
+print(f"🔍 [post_production] VERCEL = {os.getenv('VERCEL')}")
+print(f"🔍 [post_production] AWS_LAMBDA = {os.getenv('AWS_LAMBDA_FUNCTION_NAME')}")
+
 if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     # Try api/vendor first (Vercel deployment), then root vendor (local)
     api_vendor_dir = Path(__file__).parent.parent.parent / "api" / "vendor"
     root_vendor_dir = Path(__file__).parent.parent.parent / "vendor"
     
+    print(f"🔍 [post_production] Checking api_vendor_dir: {api_vendor_dir}")
+    print(f"🔍 [post_production] api_vendor_dir exists: {api_vendor_dir.exists()}")
+    print(f"🔍 [post_production] Checking root_vendor_dir: {root_vendor_dir}")
+    print(f"🔍 [post_production] root_vendor_dir exists: {root_vendor_dir.exists()}")
+    
     ffmpeg_path = None
     if (api_vendor_dir / "ffmpeg").exists():
         ffmpeg_path = api_vendor_dir / "ffmpeg"
+        print(f"🔍 [post_production] Found ffmpeg in api/vendor")
     elif (root_vendor_dir / "ffmpeg").exists():
         ffmpeg_path = root_vendor_dir / "ffmpeg"
+        print(f"🔍 [post_production] Found ffmpeg in root vendor")
+    else:
+        print(f"⚠️  [post_production] ffmpeg not found in either location")
+        # List what's actually there
+        try:
+            if api_vendor_dir.exists():
+                print(f"🔍 [post_production] api/vendor contents: {list(api_vendor_dir.iterdir())}")
+            if root_vendor_dir.exists():
+                print(f"🔍 [post_production] vendor contents: {list(root_vendor_dir.iterdir())}")
+        except Exception as e:
+            print(f"⚠️  [post_production] Error listing directories: {e}")
     
     if ffmpeg_path:
         AudioSegment.converter = str(ffmpeg_path)
@@ -29,11 +50,9 @@ if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
         AudioSegment.ffprobe = str(ffmpeg_path)
         print(f"✅ [post_production] Configured ffmpeg: {ffmpeg_path}")
     else:
-        print(f"⚠️  [post_production] ffmpeg not found")
-        print(f"⚠️  [post_production] Searched: {api_vendor_dir}, {root_vendor_dir}")
-        print(f"⚠️  [post_production] Audio processing may fail!")
+        print(f"⚠️  [post_production] ffmpeg not found - audio processing may fail!")
 else:
-    print("ℹ️  [post_production] Using system ffmpeg")
+    print("ℹ️  [post_production] Not in serverless environment, using system ffmpeg")
 # ========================================
 
 
