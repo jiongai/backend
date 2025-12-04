@@ -138,8 +138,15 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         
         # Load the audio segment
         try:
+            print(f"🔍 Loading audio file: {audio_file_path}")
+            print(f"🔍 AudioSegment.converter: {AudioSegment.converter}")
+            print(f"🔍 AudioSegment.ffmpeg: {AudioSegment.ffmpeg}")
             audio_segment = AudioSegment.from_file(audio_file_path)
+            print(f"✅ Loaded audio file: duration={len(audio_segment)}ms")
         except Exception as e:
+            print(f"❌ Failed to load audio file: {e}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
             raise Exception(f"Failed to load audio file {audio_file_path}: {str(e)}")
         
         # Apply pacing adjustment if specified
@@ -178,6 +185,19 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
     # Export final audio
     final_audio_path = output_path / "final.mp3"
     try:
+        print(f"🔍 Exporting final audio to: {final_audio_path}")
+        print(f"🔍 Total duration: {len(final_audio)}ms")
+        print(f"🔍 AudioSegment.converter: {AudioSegment.converter}")
+        
+        # Test if ffmpeg is executable
+        import subprocess
+        try:
+            result = subprocess.run([AudioSegment.converter, '-version'], 
+                                  capture_output=True, timeout=5)
+            print(f"✅ ffmpeg test: {result.returncode}, output: {result.stdout[:100]}")
+        except Exception as ffmpeg_test_error:
+            print(f"⚠️  ffmpeg test failed: {ffmpeg_test_error}")
+        
         final_audio.export(
             final_audio_path,
             format="mp3",
@@ -188,7 +208,11 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
                 "genre": "Audio Drama"
             }
         )
+        print(f"✅ Exported final audio successfully")
     except Exception as e:
+        print(f"❌ Failed to export final audio: {e}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
         raise Exception(f"Failed to export final audio: {str(e)}")
     
     # Export SRT subtitles
