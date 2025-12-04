@@ -14,8 +14,7 @@ from typing import Optional
 # ========================================
 # Configure ffmpeg for Vercel/Serverless
 # ========================================
-# Note: Main configuration is in post_production.py
-# This is kept as backup/fallback
+# CRITICAL: Must configure BEFORE importing app.services
 if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     # Try api/vendor first (Vercel), then root vendor (local)
     api_vendor_dir = Path(__file__).parent.parent / "api" / "vendor"
@@ -24,12 +23,18 @@ if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     ffmpeg_path = None
     if (api_vendor_dir / "ffmpeg").exists():
         ffmpeg_path = api_vendor_dir / "ffmpeg"
-        print(f"✅ [main] Found ffmpeg in api/vendor: {ffmpeg_path}")
     elif (root_vendor_dir / "ffmpeg").exists():
         ffmpeg_path = root_vendor_dir / "ffmpeg"
-        print(f"✅ [main] Found ffmpeg in root vendor: {ffmpeg_path}")
+    
+    if ffmpeg_path:
+        # Configure pydub to use our ffmpeg
+        from pydub import AudioSegment
+        AudioSegment.converter = str(ffmpeg_path)
+        AudioSegment.ffmpeg = str(ffmpeg_path)
+        AudioSegment.ffprobe = str(ffmpeg_path)
+        print(f"✅ [main] Configured ffmpeg: {ffmpeg_path}")
     else:
-        print(f"⚠️  [main] ffmpeg not found in {api_vendor_dir} or {root_vendor_dir}")
+        print(f"⚠️  [main] ffmpeg not found")
 else:
     print("ℹ️  [main] Running locally, using system ffmpeg")
 # ========================================
