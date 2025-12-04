@@ -6,4 +6,7 @@ edge-tts
 elevenlabs
 pydub
 dirtyjson
+# audioop-lts is only needed for Python 3.13+ (where audioop was removed)
+# Python 3.12 and earlier have built-in audioop module
+audioop-lts; python_version >= "3.13"
 

@@ -1,0 +1,53 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Environment Variables (use Vercel Secrets instead)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Audio/Temp Files
+*.mp3
+*.wav
+*.srt
+dramaflow_*/
+temp_*/
+output/
+audio/
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+test_*.py
+
+# Documentation (optional, can include if needed)
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# macOS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
