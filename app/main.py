@@ -14,7 +14,7 @@ from typing import Optional
 # ========================================
 # Configure ffmpeg for Vercel/Serverless
 # ========================================
-# CRITICAL: Must configure BEFORE importing app.services
+# CRITICAL: Must set environment variables BEFORE importing pydub
 if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     # Try api/vendor first (Vercel), then root vendor (local)
     api_vendor_dir = Path(__file__).parent.parent / "api" / "vendor"
@@ -22,17 +22,23 @@ if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     
     ffmpeg_path = None
     if (api_vendor_dir / "ffmpeg").exists():
-        ffmpeg_path = api_vendor_dir / "ffmpeg"
+        ffmpeg_path = str(api_vendor_dir / "ffmpeg")
     elif (root_vendor_dir / "ffmpeg").exists():
-        ffmpeg_path = root_vendor_dir / "ffmpeg"
+        ffmpeg_path = str(root_vendor_dir / "ffmpeg")
     
     if ffmpeg_path:
-        # Configure pydub to use our ffmpeg
+        # Set environment variables BEFORE importing pydub
+        # This way pydub will find ffmpeg during initialization
+        os.environ['FFMPEG_BINARY'] = ffmpeg_path
+        os.environ['FFPROBE_BINARY'] = ffmpeg_path
+        print(f"✅ [main] Set FFMPEG_BINARY: {ffmpeg_path}")
+        
+        # Also configure AudioSegment after import (belt and suspenders)
         from pydub import AudioSegment
-        AudioSegment.converter = str(ffmpeg_path)
-        AudioSegment.ffmpeg = str(ffmpeg_path)
-        AudioSegment.ffprobe = str(ffmpeg_path)
-        print(f"✅ [main] Configured ffmpeg: {ffmpeg_path}")
+        AudioSegment.converter = ffmpeg_path
+        AudioSegment.ffmpeg = ffmpeg_path
+        AudioSegment.ffprobe = ffmpeg_path
+        print(f"✅ [main] Configured AudioSegment")
     else:
         print(f"⚠️  [main] ffmpeg not found")
 else:
