@@ -8,6 +8,26 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 from pydub import AudioSegment
 
+# ========================================
+# Configure ffmpeg for Vercel/Serverless
+# ========================================
+# Must configure immediately after importing pydub
+if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+    vendor_dir = Path(__file__).parent.parent.parent / "vendor"
+    ffmpeg_path = vendor_dir / "ffmpeg"
+    
+    if ffmpeg_path.exists():
+        AudioSegment.converter = str(ffmpeg_path)
+        AudioSegment.ffmpeg = str(ffmpeg_path)
+        AudioSegment.ffprobe = str(ffmpeg_path)
+        print(f"✅ [post_production] Configured ffmpeg: {ffmpeg_path}")
+    else:
+        print(f"⚠️  [post_production] ffmpeg not found at: {ffmpeg_path}")
+        print(f"⚠️  [post_production] Audio processing may fail!")
+else:
+    print("ℹ️  [post_production] Using system ffmpeg")
+# ========================================
+
 
 def format_timestamp(milliseconds: int) -> str:
     """
