@@ -1,0 +1,7 @@
+# Development Requirements (for Python 3.13+)
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
+
+# audioop-lts is only needed for Python 3.13+ (where audioop was removed)
+# Python 3.12 and earlier have built-in audioop module
+audioop-lts; python_version >= "3.13"
+

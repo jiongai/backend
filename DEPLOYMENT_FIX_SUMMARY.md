@@ -52,22 +52,31 @@ requirements-dev.txt   # 用于本地
 
 **问题**: 维护两份文件，容易不同步
 
-#### ✅ 正确的修复方案
+#### ✅ 正确的修复方案（更新）
 
-**使用 Python 环境标记（Environment Markers）**
+**⚠️ 环境标记方案遇到问题**: Vercel 的 `uv` 工具不能正确处理环境标记
+
+**最终方案**: 分离部署和开发依赖
 
 ```python
-# requirements.txt
+# requirements.txt (用于 Vercel，Python 3.12)
+fastapi
+uvicorn[standard]
+...
+pydub
+# 不含 audioop-lts
+
+# requirements-dev.txt (用于本地 Python 3.13+)
 audioop-lts; python_version >= "3.13"
 ```
 
 **工作原理**:
-```python
+```bash
 # Python 3.12 (Vercel)
-pip install  # 跳过 audioop-lts，使用内置 audioop ✅
+pip install -r requirements.txt  # 使用内置 audioop ✅
 
 # Python 3.13+ (本地开发)
-pip install  # 安装 audioop-lts ✅
+pip install -r requirements.txt -r requirements-dev.txt  # 安装 audioop-lts ✅
 ```
 
 #### 验证修复
