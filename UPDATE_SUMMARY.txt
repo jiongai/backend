@@ -1,0 +1,59 @@
+🎉 DramaFlow 更新 - 现在返回 MP3 + SRT！
+=========================================
+
+✅ 已修复的问题:
+- `/generate` 端点现在返回 ZIP 文件
+- ZIP 包含: drama.mp3 + drama.srt
+
+📦 新的响应格式:
+--------------------
+Content-Type: application/zip
+文件内容:
+  ├─ drama.mp3 (音频文件)
+  └─ drama.srt (字幕文件)
+
+响应头:
+  X-Package-Contents: drama.mp3,drama.srt
+  X-Segments-Count: [片段数量]
+
+🔧 代码修改:
+--------------------
+1. 添加 zipfile 导入
+2. 创建 ZIP 包含两个文件
+3. 返回 ZIP 而不是单独的 MP3
+
+📝 前端需要更新:
+--------------------
+需要使用 JSZip 解压 ZIP 文件
+
+安装:
+  npm install jszip
+
+示例代码:
+  const zip = await JSZip.loadAsync(blob);
+  const mp3 = await zip.file('drama.mp3')?.async('blob');
+  const srt = await zip.file('drama.srt')?.async('text');
+
+📚 完整文档:
+--------------------
+详细说明: API_RESPONSE_UPDATE.md
+包含:
+  - 前端集成代码
+  - React 组件示例
+  - SRT 解析函数
+  - 字幕显示示例
+
+🚀 立即测试:
+--------------------
+1. 重启服务器: ./run.sh
+2. 测试: 
+   curl -X POST http://localhost:8000/generate \
+     -H "Content-Type: application/json" \
+     -d '{"text":"Test"}' \
+     -o test.zip
+3. 解压: unzip test.zip
+4. 查看: ls -la
+   应该看到 drama.mp3 和 drama.srt
+
+✅ 完成!
+
