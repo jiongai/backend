@@ -178,8 +178,14 @@ async def generate_audio_drama(
     
     try:
         # Step 1: Analyze text and convert to script
-        print(f"Analyzing text ({len(request.text)} characters)...")
-        analysis_result = await analyze_text(request.text, openrouter_key)
+        try:
+            print(f"Analyzing text ({len(request.text)} characters)...")
+            analysis_result = await analyze_text(request.text, openrouter_key)
+        except Exception as e:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Text analysis failed (OpenRouter timeout/error): {str(e)}"
+            )
         
         if "script" not in analysis_result:
             raise HTTPException(
@@ -198,24 +204,19 @@ async def generate_audio_drama(
         print(f"Generated script with {len(script)} segments")
         
         # Step 1.5: Detect language and determine consistent narrator voice
-        # This ensures ALL narration uses the SAME voice throughout the entire drama
         import re
         has_chinese = bool(re.search(r'[\u4e00-\u9fff]', request.text))
         
-        # Choose ONE narrator voice for the entire script
         if has_chinese:
-            narrator_voice = "zh-CN-YunxiNeural"  # Chinese male narrator
+            narrator_voice = "zh-CN-YunxiNeural"
             print(f"Detected Chinese text. Using narrator: zh-CN-YunxiNeural")
         else:
-            narrator_voice = "en-US-BrianNeural"  # English male narrator
+            narrator_voice = "en-US-BrianNeural"
             print(f"Detected English text. Using narrator: en-US-BrianNeural")
         
         # Step 2: Generate audio for all segments with controlled concurrency
         print("Generating audio for segments...")
         
-        # Limit concurrent requests to avoid API rate limits
-        # ElevenLabs free tier: max 4 concurrent requests
-        # Use 3 to be safe
         semaphore = asyncio.Semaphore(3)
         
         async def generate_with_limit(segment):
@@ -224,16 +225,21 @@ async def generate_audio_drama(
                     segment=segment,
                     output_dir=audio_dir,
                     elevenlabs_api_key=elevenlabs_key,
-                    narration_voice=narrator_voice  # Pass the fixed narrator voice
+                    narration_voice=narrator_voice
                 )
         
-        # Create tasks with concurrency control
         audio_generation_tasks = [
             generate_with_limit(segment) for segment in script
         ]
         
-        # Execute all audio generation tasks with controlled concurrency
-        audio_paths = await asyncio.gather(*audio_generation_tasks)
+        try:
+            # Execute all audio generation tasks with controlled concurrency
+            audio_paths = await asyncio.gather(*audio_generation_tasks)
+        except Exception as e:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Audio generation failed (TTS timeout/error): {str(e)}"
+            )
         
         # Add audio file paths back to segments
         for segment, audio_path in zip(script, audio_paths):
@@ -243,10 +249,16 @@ async def generate_audio_drama(
         
         # Step 3: Merge audio and generate SRT
         print("Merging audio and generating subtitles...")
-        final_audio_path, final_srt_path = merge_audio_and_generate_srt(
-            segments=script,
-            temp_dir=temp_dir
-        )
+        try:
+            final_audio_path, final_srt_path = merge_audio_and_generate_srt(
+                segments=script,
+                temp_dir=temp_dir
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Post-production failed (Merge error): {str(e)}"
+            )
         
         print(f"Final audio: {final_audio_path}")
         print(f"Final SRT: {final_srt_path}")

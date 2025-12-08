@@ -64,7 +64,7 @@ async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
     max_retries = 2
     last_error = None
     
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         for attempt in range(max_retries + 1):
             try:
                 # Make API request
