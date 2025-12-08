@@ -214,38 +214,72 @@ async def generate_audio_drama(
             narrator_voice = "en-US-BrianNeural"
             print(f"Detected English text. Using narrator: en-US-BrianNeural")
         
-        # Step 2: Generate audio for all segments with controlled concurrency
-        print("Generating audio for segments...")
+        # Step 2: Generate audio - Phase 1: Narration (Free)
+        # We generate narration first so that if Edge TTS fails, we don't waste ElevenLabs credits
+        print("Phase 1: Generating Narration (Edge TTS)...")
         
-        semaphore = asyncio.Semaphore(3)
+        script_with_indices = list(enumerate(script))
+        narration_items = [(i, seg) for i, seg in script_with_indices if seg["type"] == "narration"]
+        dialogue_items = [(i, seg) for i, seg in script_with_indices if seg["type"] == "dialogue"]
         
-        async def generate_with_limit(segment):
-            async with semaphore:
-                return await generate_segment_audio(
-                    segment=segment,
-                    output_dir=audio_dir,
-                    elevenlabs_api_key=elevenlabs_key,
-                    narration_voice=narrator_voice
-                )
-        
-        audio_generation_tasks = [
-            generate_with_limit(segment) for segment in script
+        # Generate Narration
+        # Note: audio_engine has its own global semaphore for EdgeTTS concurrency
+        narration_tasks = [
+            generate_segment_audio(
+                segment=seg,
+                output_dir=audio_dir,
+                elevenlabs_api_key=elevenlabs_key,
+                narration_voice=narrator_voice
+            ) for _, seg in narration_items
         ]
         
-        try:
-            # Execute all audio generation tasks with controlled concurrency
-            audio_paths = await asyncio.gather(*audio_generation_tasks)
-        except Exception as e:
-            raise HTTPException(
-                status_code=504,
-                detail=f"Audio generation failed (TTS timeout/error): {str(e)}"
-            )
+        if narration_tasks:
+            try:
+                narration_paths = await asyncio.gather(*narration_tasks)
+                # Assign paths back to script immediately
+                for (idx, _), path in zip(narration_items, narration_paths):
+                    script[idx]["audio_file_path"] = path
+                print(f"✅ Generated {len(narration_paths)} narration segments")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Narration generation failed (EdgeTTS): {str(e)}"
+                )
         
-        # Add audio file paths back to segments
-        for segment, audio_path in zip(script, audio_paths):
-            segment["audio_file_path"] = audio_path
+        # Step 2: Generate audio - Phase 2: Dialogue (Paid)
+        print("Phase 2: Generating Dialogue (ElevenLabs)...")
         
-        print(f"Generated {len(audio_paths)} audio files")
+        if dialogue_items:
+            # ElevenLabs concurrency limit
+            semaphore = asyncio.Semaphore(3)
+            
+            async def generate_dialogue_with_limit(segment):
+                async with semaphore:
+                    return await generate_segment_audio(
+                        segment=segment,
+                        output_dir=audio_dir,
+                        elevenlabs_api_key=elevenlabs_key,
+                        narration_voice=narrator_voice
+                    )
+            
+            dialogue_tasks = [
+                generate_dialogue_with_limit(seg) for _, seg in dialogue_items
+            ]
+            
+            try:
+                dialogue_paths = await asyncio.gather(*dialogue_tasks)
+                # Assign paths back to script
+                for (idx, _), path in zip(dialogue_items, dialogue_paths):
+                    script[idx]["audio_file_path"] = path
+                print(f"✅ Generated {len(dialogue_paths)} dialogue segments")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Dialogue generation failed (ElevenLabs): {str(e)}"
+                )
+        
+        total_audio_files = len(narration_items) + len(dialogue_items)
+        print(f"Generated total {total_audio_files} audio files")
         
         # Step 3: Merge audio and generate SRT
         print("Merging audio and generating subtitles...")

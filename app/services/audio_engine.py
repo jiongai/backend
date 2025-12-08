@@ -25,6 +25,11 @@ DIALOGUE_VOICES = {
     "female": "21m00Tcm4TlvDq8ikWAM"    # Rachel - Warm, friendly voice
 }
 
+# Global semaphore to limit Edge TTS concurrency
+# Microsoft's Edge TTS service is sensitive to concurrent connections from the same IP (especially data center IPs)
+# Limiting to 1 concurrent request helps avoid "No audio was received" errors
+EDGE_TTS_SEMAPHORE = asyncio.Semaphore(1)
+
 
 async def generate_segment_audio(
     segment: Dict,
@@ -114,29 +119,39 @@ async def _generate_with_edge_tts(
         voice = NARRATION_VOICE_EN
     print(f"   [EdgeTTS] Starting generation for: {text[:20]}...")
     
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            # Create TTS communication
-            communicate = edge_tts.Communicate(text, voice)
-            
-            # Generate and save audio with timeout
-            # Edge TTS should be fast, 30s is plenty
-            await asyncio.wait_for(communicate.save(output_file), timeout=30.0)
-            print(f"   [EdgeTTS] ✅ Completed: {output_file}")
-            return
-            
-        except asyncio.TimeoutError:
-            print(f"   [EdgeTTS] ⚠️ Timeout after 30s (attempt {attempt+1}/{max_retries})")
-            if attempt == max_retries - 1:
-                raise Exception("EdgeTTS generation timed out after retries")
-        except Exception as e:
-            print(f"   [EdgeTTS] ⚠️ Failed: {e} (attempt {attempt+1}/{max_retries})")
-            if "No audio was received" in str(e) and attempt < max_retries - 1:
-                await asyncio.sleep(1 * (attempt + 1))  # Backoff
-                continue
-            if attempt == max_retries - 1:
-                raise
+    # Acquire the semaphore to ensure only one Edge TTS request happens at a time
+    async with EDGE_TTS_SEMAPHORE:
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Create TTS communication
+                communicate = edge_tts.Communicate(text, voice)
+                
+                # Generate and save audio with timeout
+                # Edge TTS should be fast, 30s is plenty
+                await asyncio.wait_for(communicate.save(output_file), timeout=30.0)
+                print(f"   [EdgeTTS] ✅ Completed: {output_file}")
+                return
+                
+            except asyncio.TimeoutError:
+                print(f"   [EdgeTTS] ⚠️ Timeout after 30s (attempt {attempt+1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    raise Exception("EdgeTTS generation timed out after retries")
+            except Exception as e:
+                print(f"   [EdgeTTS] ⚠️ Failed: {e} (attempt {attempt+1}/{max_retries})")
+                
+                # Check for common Edge TTS errors
+                error_str = str(e)
+                if "No audio was received" in error_str or "Connection closed" in error_str:
+                    if attempt < max_retries - 1:
+                        # Increased backoff: 2s, 4s
+                        wait_time = 2 * (attempt + 1)
+                        print(f"   [EdgeTTS] Waiting {wait_time}s before retry...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                
+                if attempt == max_retries - 1:
+                    raise
 
 
 async def _generate_with_elevenlabs(
