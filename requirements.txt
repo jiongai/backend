@@ -4,6 +4,9 @@ python-dotenv
 httpx
 edge-tts>=6.1.9
 elevenlabs
+openai
+azure-cognitiveservices-speech
+google-cloud-text-to-speech
 pydub
 dirtyjson
 

@@ -140,7 +140,8 @@ async def generate_audio_drama(
     request: DramaRequest,
     background_tasks: BackgroundTasks,
     openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-API-Key"),
-    elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key")
+    elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key"),
+    user_tier: str = Header("free", alias="X-User-Tier")  # "free" or "vip"
 ):
     """
     Generate an audio drama from novel text.
@@ -229,7 +230,8 @@ async def generate_audio_drama(
                 segment=seg,
                 output_dir=audio_dir,
                 elevenlabs_api_key=elevenlabs_key,
-                narration_voice=narrator_voice
+                narration_voice=narrator_voice,
+                user_tier=user_tier
             ) for _, seg in narration_items
         ]
         
@@ -243,7 +245,7 @@ async def generate_audio_drama(
             except Exception as e:
                 raise HTTPException(
                     status_code=504,
-                    detail=f"Narration generation failed (EdgeTTS): {str(e)}"
+                    detail=f"Narration generation failed: {str(e)}"
                 )
         
         # Step 2: Generate audio - Phase 2: Dialogue (Paid)
@@ -259,7 +261,8 @@ async def generate_audio_drama(
                         segment=segment,
                         output_dir=audio_dir,
                         elevenlabs_api_key=elevenlabs_key,
-                        narration_voice=narrator_voice
+                        narration_voice=narrator_voice,
+                        user_tier=user_tier
                     )
             
             dialogue_tasks = [
