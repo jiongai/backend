@@ -114,11 +114,22 @@ async def _generate_with_edge_tts(
         # This shouldn't happen for narration, but kept for backwards compatibility
         voice = NARRATION_VOICE_EN
     
-    # Create TTS communication
-    communicate = edge_tts.Communicate(text, voice)
-    
-    # Generate and save audio
-    await communicate.save(output_file)
+    print(f"   [EdgeTTS] Starting generation for: {text[:20]}...")
+    try:
+        # Create TTS communication
+        communicate = edge_tts.Communicate(text, voice)
+        
+        # Generate and save audio with timeout
+        # Edge TTS should be fast, 30s is plenty
+        await asyncio.wait_for(communicate.save(output_file), timeout=30.0)
+        print(f"   [EdgeTTS] ✅ Completed: {output_file}")
+        
+    except asyncio.TimeoutError:
+        print(f"   [EdgeTTS] ❌ Timeout after 30s")
+        raise Exception("EdgeTTS generation timed out")
+    except Exception as e:
+        print(f"   [EdgeTTS] ❌ Failed: {e}")
+        raise
 
 
 async def _generate_with_elevenlabs(
@@ -150,15 +161,21 @@ async def _generate_with_elevenlabs(
     # Retry mechanism for SSL/network errors
     for attempt in range(max_retries):
         try:
+            print(f"   [ElevenLabs] Starting attempt {attempt+1}/{max_retries} for: {text[:20]}...")
+            
             # Use the new API: text_to_speech.convert()
             # Using eleven_turbo_v2_5 - the latest free tier model
-            audio_generator = await loop.run_in_executor(
-                None,
-                lambda: client.text_to_speech.convert(
-                    voice_id=voice_name,
-                    text=text,
-                    model_id="eleven_turbo_v2_5"  # Free tier compatible model
-                )
+            # Wrap in wait_for to enforce timeout
+            audio_generator = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: client.text_to_speech.convert(
+                        voice_id=voice_name,
+                        text=text,
+                        model_id="eleven_turbo_v2_5"
+                    )
+                ),
+                timeout=60.0
             )
             
             # Save the audio - write bytes to file
