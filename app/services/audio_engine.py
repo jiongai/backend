@@ -100,9 +100,18 @@ async def _generate_with_edge_tts(
     Args:
         text: Text to convert to speech
         gender: Gender for voice selection (only used if fixed_voice is None)
-        output_file: Path to save the audio file
         fixed_voice: If provided, use this specific voice ID (for consistent narration)
     """
+    # If a fixed voice is provided (for narration consistency), use it
+    if fixed_voice:
+        voice = fixed_voice
+        print(f"   Using consistent narrator voice: {voice}")
+    elif gender is None:
+        # Fallback: use default English narrator
+        voice = NARRATION_VOICE_EN
+    else:
+        # This shouldn't happen for narration, but kept for backwards compatibility
+        voice = NARRATION_VOICE_EN
     print(f"   [EdgeTTS] Starting generation for: {text[:20]}...")
     
     max_retries = 3
