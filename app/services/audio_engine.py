@@ -103,33 +103,31 @@ async def _generate_with_edge_tts(
         output_file: Path to save the audio file
         fixed_voice: If provided, use this specific voice ID (for consistent narration)
     """
-    # If a fixed voice is provided (for narration consistency), use it
-    if fixed_voice:
-        voice = fixed_voice
-        print(f"   Using consistent narrator voice: {voice}")
-    elif gender is None:
-        # Fallback: use default English narrator
-        voice = NARRATION_VOICE_EN
-    else:
-        # This shouldn't happen for narration, but kept for backwards compatibility
-        voice = NARRATION_VOICE_EN
-    
     print(f"   [EdgeTTS] Starting generation for: {text[:20]}...")
-    try:
-        # Create TTS communication
-        communicate = edge_tts.Communicate(text, voice)
-        
-        # Generate and save audio with timeout
-        # Edge TTS should be fast, 30s is plenty
-        await asyncio.wait_for(communicate.save(output_file), timeout=30.0)
-        print(f"   [EdgeTTS] ✅ Completed: {output_file}")
-        
-    except asyncio.TimeoutError:
-        print(f"   [EdgeTTS] ❌ Timeout after 30s")
-        raise Exception("EdgeTTS generation timed out")
-    except Exception as e:
-        print(f"   [EdgeTTS] ❌ Failed: {e}")
-        raise
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Create TTS communication
+            communicate = edge_tts.Communicate(text, voice)
+            
+            # Generate and save audio with timeout
+            # Edge TTS should be fast, 30s is plenty
+            await asyncio.wait_for(communicate.save(output_file), timeout=30.0)
+            print(f"   [EdgeTTS] ✅ Completed: {output_file}")
+            return
+            
+        except asyncio.TimeoutError:
+            print(f"   [EdgeTTS] ⚠️ Timeout after 30s (attempt {attempt+1}/{max_retries})")
+            if attempt == max_retries - 1:
+                raise Exception("EdgeTTS generation timed out after retries")
+        except Exception as e:
+            print(f"   [EdgeTTS] ⚠️ Failed: {e} (attempt {attempt+1}/{max_retries})")
+            if "No audio was received" in str(e) and attempt < max_retries - 1:
+                await asyncio.sleep(1 * (attempt + 1))  # Backoff
+                continue
+            if attempt == max_retries - 1:
+                raise
 
 
 async def _generate_with_elevenlabs(
