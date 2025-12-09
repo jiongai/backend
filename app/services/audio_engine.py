@@ -280,3 +280,37 @@ def _save_audio_bytes(audio_generator, output_file: str) -> None:
     with open(output_file, "wb") as f:
         for chunk in audio_generator:
             f.write(chunk)
+
+
+async def generate_script_audio(
+    script: list,
+    output_dir: str,
+    elevenlabs_api_key: str = None,
+    user_tier: str = "free"
+) -> list:
+    """
+    Generate audio for all segments in a script.
+    
+    Args:
+        script: List of script segments
+        output_dir: Directory to save audio files
+        elevenlabs_api_key: ElevenLabs API key (required if script contains dialogue)
+        user_tier: User tier ("free" or "vip")
+        
+    Returns:
+        list: List of paths to generated audio files (in same order as script)
+    """
+    tasks = []
+    for segment in script:
+        task = generate_segment_audio(
+            segment=segment, 
+            output_dir=output_dir, 
+            elevenlabs_api_key=elevenlabs_api_key,
+            user_tier=user_tier
+        )
+        tasks.append(task)
+    
+    # Generate all audio files concurrently
+    audio_paths = await asyncio.gather(*tasks)
+    
+    return audio_paths
