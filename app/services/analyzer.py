@@ -5,6 +5,7 @@ Converts novel text into structured audio drama scripts using Claude 3.5 Sonnet 
 
 import httpx
 import dirtyjson
+import asyncio
 from typing import Dict, Any, List
 
 
@@ -32,84 +33,113 @@ Rules:
 - Output strictly valid JSON."""
 
 
-async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
+
+def _chunk_text(text: str, max_chunk_size: int = 1200) -> List[str]:
     """
-    Analyze novel text and convert it to audio drama script format.
+    Split text into chunks aiming for max_chunk_size, preserving paragraph boundaries.
+    """
+    if len(text) <= max_chunk_size:
+        return [text]
+        
+    chunks = []
+    current_chunk = []
+    current_size = 0
     
-    Args:
-        text: The novel text to convert
-        api_key: OpenRouter API key
+    # Split by actual paragraphs first
+    paragraphs = text.split('\n')
+    
+    for paragraph in paragraphs:
+        # If adding this paragraph exceeds limit (and we have content)
+        if current_size + len(paragraph) > max_chunk_size and current_chunk:
+            chunks.append('\n'.join(current_chunk))
+            current_chunk = [paragraph]
+            current_size = len(paragraph)
+        else:
+            current_chunk.append(paragraph)
+            current_size += len(paragraph) + 1 # +1 for newline
+            
+    if current_chunk:
+        chunks.append('\n'.join(current_chunk))
         
-    Returns:
-        Dict containing the script with segments
-        
-    Raises:
-        httpx.HTTPError: If the API request fails
-        ValueError: If JSON parsing fails after retries
-    """
+    return chunks
+
+
+async def _analyze_chunk(client: httpx.AsyncClient, chunk_text: str, api_key: str, chunk_index: int) -> List[Dict[str, Any]]:
+    """Analyze a single chunk of text."""
     url = "https://openrouter.ai/api/v1/chat/completions"
-    
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     
+    # Context prompt for chunks
+    chunk_prompt = f"Part {chunk_index + 1} of a story. {SYSTEM_PROMPT}"
+    
     payload = {
         "model": "anthropic/claude-3.5-sonnet",
-        "max_tokens": 8192,  # Ensure enough tokens for long scripts
+        "max_tokens": 8192,
         "messages": [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": chunk_prompt
             },
             {
                 "role": "user",
-                "content": text
+                "content": chunk_text
             }
         ]
     }
     
     max_retries = 2
-    last_error = None
-    
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for attempt in range(max_retries + 1):
-            try:
-                # Make API request
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                
-                # Extract the response content
-                response_data = response.json()
-                content = response_data["choices"][0]["message"]["content"]
-                
-                # Parse the JSON using dirtyjson for robust parsing
-                parsed_result = dirtyjson.loads(content)
-                
-                # Validate the result has the expected structure
-                if "script" not in parsed_result:
-                    raise ValueError("Response does not contain 'script' key")
-                
-                if not isinstance(parsed_result["script"], list):
-                    raise ValueError("'script' must be a list")
-                
-                return parsed_result
-                
-            except (dirtyjson.Error, ValueError, KeyError) as e:
-                last_error = e
-                if attempt < max_retries:
-                    # Retry on parsing errors
-                    continue
-                else:
-                    # Final attempt failed
-                    raise ValueError(
-                        f"Failed to parse response after {max_retries + 1} attempts: {str(e)}"
-                    ) from e
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.post(url, json=payload, headers=headers, timeout=120.0)
+            response.raise_for_status()
             
-            except httpx.HTTPError as e:
-                # Don't retry on HTTP errors, raise immediately
-                raise
+            content = response.json()["choices"][0]["message"]["content"]
+            parsed = dirtyjson.loads(content)
+            
+            if "script" not in parsed or not isinstance(parsed["script"], list):
+                if attempt == max_retries:
+                    print(f"❌ Chunk {chunk_index} failed validation")
+                    return []
+                continue
+                
+            return parsed["script"]
+            
+        except Exception as e:
+            if attempt == max_retries:
+                print(f"❌ Chunk {chunk_index} error: {e}")
+                return []
+            await asyncio.sleep(1) # Backoff
+            
+    return []
+
+
+async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
+    """
+    Analyze novel text converting it to audio drama script format.
+    Handles long text by chunking.
+    """
+    # 1. Chunking
+    chunks = _chunk_text(text)
     
-    # This should not be reached, but just in case
-    raise ValueError(f"Failed to analyze text: {last_error}")
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        # 2. Parallel Analysis
+        tasks = [
+            _analyze_chunk(client, chunk, api_key, i) 
+            for i, chunk in enumerate(chunks)
+        ]
+        
+        results = await asyncio.gather(*tasks)
+        
+    # 3. Merge Results
+    full_script = []
+    for chunk_script in results:
+        full_script.extend(chunk_script)
+        
+    if not full_script:
+        raise ValueError("Failed to generate any script segments")
+        
+    return {"script": full_script}
 
