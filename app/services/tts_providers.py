@@ -7,7 +7,7 @@ from typing import Optional, Dict
 # Try imports, handle missing dependencies gracefully
 try:
     import azure.cognitiveservices.speech as speechsdk
-except ImportError:
+except (ImportError, OSError, Exception):
     speechsdk = None
 
 try:
