@@ -23,7 +23,13 @@ Segment format:
 Rules:
 - Split long narration (>30 words) for better pacing.
 - Infer speakers from context.
-- IMPORTANT: Maintain the original language of the input text. Do NOT translate."""
+Rules:
+- Split long narration (>30 words) for better pacing.
+- Infer speakers from context.
+- IMPORTANT: Maintain the original language of the input text. Do NOT translate.
+- JSON FORMATTING: In the "text" field, replace any internal double quotes with single quotes. Do not use unescaped double quotes inside strings.
+- CRITICAL: You must convert the ENTIRE text given. Do not summarize.
+- Output strictly valid JSON."""
 
 
 async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
