@@ -8,12 +8,12 @@ import dirtyjson
 from typing import Dict, Any, List
 
 
-SYSTEM_PROMPT = """You are an expert Audio Drama Director. Convert English novel text into a structured JSON script. Output strictly a JSON object with a key script containing a list of segments.
+SYSTEM_PROMPT = """You are an expert Audio Drama Director. Convert novel text into a structured JSON script. Output strictly a JSON object with a key script containing a list of segments.
 
 Segment format:
 {
     "type": "narration" | "dialogue",
-    "text": "content without quotes",
+    "text": "content without quotes (keep original language)",
     "character": "name or Narrator",
     "gender": "male" | "female",
     "emotion": "neutral" | "happy" | "sad" | "angry" | "fearful" | "surprised" | "whispering" | "shouting",
@@ -22,7 +22,8 @@ Segment format:
 
 Rules:
 - Split long narration (>30 words) for better pacing.
-- Infer speakers from context."""
+- Infer speakers from context.
+- IMPORTANT: Maintain the original language of the input text. Do NOT translate."""
 
 
 async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
@@ -49,6 +50,7 @@ async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
     
     payload = {
         "model": "anthropic/claude-3.5-sonnet",
+        "max_tokens": 8192,  # Ensure enough tokens for long scripts
         "messages": [
             {
                 "role": "system",
