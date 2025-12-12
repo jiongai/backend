@@ -180,6 +180,7 @@ async def generate_audio_drama(
             print(f"Analyzing text ({len(request.text)} characters)...")
             analysis_result = await analyze_text(request.text, openrouter_key)
         except Exception as e:
+            print(f"❌ Analysis failed: {str(e)}")
             raise HTTPException(
                 status_code=504,
                 detail=f"Text analysis failed (OpenRouter timeout/error): {str(e)}"
