@@ -6,7 +6,7 @@ edge-tts>=6.1.9
 elevenlabs
 openai
 azure-cognitiveservices-speech
-google-cloud-text-to-speech
+google-cloud-texttospeech
 pydub
 dirtyjson
 

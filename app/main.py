@@ -48,14 +48,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
+# Load environment variables FIRST
+load_dotenv()
+
 from app.services import (
     analyze_text,
     generate_segment_audio,
     merge_audio_and_generate_srt
 )
-
-# Load environment variables
-load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(
