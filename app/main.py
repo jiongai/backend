@@ -12,18 +12,15 @@ from pathlib import Path
 from typing import Optional
 
 # ========================================
-# Configure ffmpeg for Vercel/Serverless
+# Configure ffmpeg for Serverless
 # ========================================
 # CRITICAL: Must set environment variables BEFORE importing pydub
-if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-    # Try api/vendor first (Vercel), then root vendor (local)
-    api_vendor_dir = Path(__file__).parent.parent / "api" / "vendor"
+if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+    # Try root vendor (local)
     root_vendor_dir = Path(__file__).parent.parent / "vendor"
     
     ffmpeg_path = None
-    if (api_vendor_dir / "ffmpeg").exists():
-        ffmpeg_path = str(api_vendor_dir / "ffmpeg")
-    elif (root_vendor_dir / "ffmpeg").exists():
+    if (root_vendor_dir / "ffmpeg").exists():
         ffmpeg_path = str(root_vendor_dir / "ffmpeg")
     
     if ffmpeg_path:
@@ -42,7 +39,7 @@ if os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
     else:
         print(f"⚠️  [main] ffmpeg not found")
 else:
-    print("ℹ️  [main] Running locally, using system ffmpeg")
+    print("ℹ️  [main] Running locally or on Railway, using system ffmpeg")
 # ========================================
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header

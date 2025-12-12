@@ -52,8 +52,8 @@ python verify_requirements.py
 # Railway deployment (recommended for audio processing)
 # See RAILWAY_DEPLOYMENT.md for detailed instructions
 
-# Vercel deployment (limited to 10s execution time)
-# Configured via vercel.json and nixpacks.toml
+# Railway deployment (recommended for audio processing)
+# See RAILWAY_DEPLOYMENT.md for detailed instructions
 ```
 
 ## Architecture Overview
@@ -107,9 +107,9 @@ backend/
 ├── api/vendor/              # ffmpeg binaries for serverless deployment
 ├── requirements.txt         # Production dependencies
 ├── requirements-dev.txt     # Development dependencies
-├── nixpacks.toml           # Build configuration for Railway/Vercel
+├── nixpacks.toml           # Build configuration for Railway
 ├── railway.toml            # Railway deployment config
-├── vercel.json             # Vercel deployment config
+
 └── Procfile                # Process definition
 ```
 
@@ -142,11 +142,7 @@ FFMPEG_BINARY=/path/to/ffmpeg # Override ffmpeg location
 - Persistent processes (no cold starts)
 - See `RAILWAY_DEPLOYMENT.md` for full guide
 
-#### Vercel (Limited)
-- 10-second execution limit on Hobby plan
-- Requires manual ffmpeg binary bundling
-- Cold starts affect performance
-- Use only for testing or very short texts
+
 
 ## API Endpoints
 
@@ -202,5 +198,5 @@ Health check with API key validation.
 - **Never** modify the narrator voice consistency logic without thorough testing
 - **Always** maintain backward compatibility with existing API endpoints
 - **Consider** ElevenLabs API costs when testing audio generation
-- **Remember** that Vercel has strict execution time limits
+
 - **Use** Railway for production deployments with audio processing
