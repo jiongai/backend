@@ -7,6 +7,8 @@ import httpx
 import dirtyjson
 import asyncio
 from typing import Dict, Any, List
+import re
+import json
 
 
 SYSTEM_PROMPT = """You are an expert Audio Drama Director. Convert novel text into a structured JSON script. Output strictly a JSON object with a key script containing a list of segments.
@@ -28,9 +30,10 @@ Rules:
 - Split long narration (>30 words) for better pacing.
 - Infer speakers from context.
 - IMPORTANT: Maintain the original language of the input text. Do NOT translate.
-- JSON FORMATTING: In the "text" field, replace any internal double quotes with single quotes. Do not use unescaped double quotes inside strings.
+- JSON FORMATTING: CRITICAL! The "text" field content often contains quotes. To avoid syntax errors, you MUST enclose the text value in TRIPLE ANGLE BRACKETS `<<< >>>` instead of quotes.
+  Example: { "text": <<<He said "Hello" and she cried "Wow!">>> }
 - CRITICAL: You must convert the ENTIRE text given. Do not summarize.
-- Output strictly valid JSON."""
+- Output a valid JSON object (with the exception of the angle brackets which will be post-processed)."""
 
 
 
@@ -95,9 +98,19 @@ async def _analyze_chunk(client: httpx.AsyncClient, chunk_text: str, api_key: st
         try:
             response = await client.post(url, json=payload, headers=headers, timeout=120.0)
             response.raise_for_status()
-            
             content = response.json()["choices"][0]["message"]["content"]
-            parsed = dirtyjson.loads(content)
+            
+            # Post-processing: Convert <<<...>>> to valid JSON strings (quoted)
+            # Find <<< content >>> and replace with "escaped content"
+            def replace_brackets(match):
+                text_content = match.group(1)
+                # Ensure the text is properly JSON escaped and quoted
+                return json.dumps(text_content)
+            
+            # Regex to find <<< content >>> across newlines (DOTALL)
+            fixed_content = re.sub(r'<<<(.*?)>>>', replace_brackets, content, flags=re.DOTALL)
+            
+            parsed = dirtyjson.loads(fixed_content)
             
             if "script" not in parsed or not isinstance(parsed["script"], list):
                 if attempt == max_retries:
