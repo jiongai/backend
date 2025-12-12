@@ -43,10 +43,48 @@ VOICE_MAP = {
         "male": "onyx",
         "female": "alloy" # or shimmer
     },
+
     # Level 4: ElevenLabs (High Emotion Dialogue)
     "elevenlabs": {
-        "male": "pNInz6obpgDQGcFmaJgB",   # Adam
-        "female": "21m00Tcm4TlvDq8ikWAM" # Rachel
+        # Defaults
+        "male": "pNInz6obpgDQGcFmaJgB",   # Adam (Default Male)
+        "female": "21m00Tcm4TlvDq8ikWAM", # Rachel (Default Female)
+        
+        # Extended Voice Pool for Deterministic Assignment
+        "pool": {
+            "male": [
+                "pNInz6obpgDQGcFmaJgB", # Adam
+                "ErXwobaYiN019PkySvjV", # Antoni
+                "VR6AewLTigWG4xSOukaG", # Arnold
+                "N2lVS1w4EtoT3dr4eOWO", # Callum
+                "IKne3meq5aSn9XLyUdCD", # Charlie
+                "2EiwWnXFnvU5JabPnv8n", # Clyde
+                "CYw3kZ02Hs0563khs1Fj", # Dave
+                "D38z5RcWu1voky8WS1ja", # Fin
+                "JBFqnCBsd6RMkjVDRZzb", # George
+                "TxGEqnHWrfWFTfGW9XjX", # Josh
+                "ODq5zmih8GrVes37Dizd", # Patrick
+                "yoZ06aMxZJJ28mfd3POQ", # Sam
+                "GBv7mTt0atIp3Br8iCZE", # Thomas
+            ],
+            "female": [
+                "21m00Tcm4TlvDq8ikWAM", # Rachel
+                "EXAVITQu4vr4xnSDxMaL", # Bella
+                "XB0fDUnXU5powFXDhCwa", # Charlotte
+                "AZnzlk1XvdvUeBnXmlld", # Domi
+                "ThT5KcBeYPX3keUQqHPh", # Dorothy
+                "MF3mGyEYCl7XYWbV9V6O", # Elli
+                "LcfcDJNUP1GQjkzn1xUU", # Emily
+                "jsCqWAovK2LkecY7zXl4", # Freya
+                "jBpfuIE2acCO8z3wKNLl", # Gigi
+                "z9fAnlkpzviPz146aGWa", # Glinda
+                "oWAxZDx7w5VEj9dCyTzz", # Grace
+                "cgSgspJ2msm6clMCkdW9", # Jessica
+                "pFZP5JQG7iQjIQuC4Bku", # Lily
+                "XrExE9yKIg1WjnnlVkGX", # Matilda
+                "piTKgcLEGmPE4e6mEKli", # Nicole
+            ]
+        }
     }
 }
 
@@ -57,9 +95,40 @@ class TTSManager:
             "google": GoogleTTSProvider(),
             "openai": OpenAITTSProvider()
         }
-        # ElevenLabs handled separately due to existing complex logic, or should we unify?
-        # For now, keeping ElevenLabs separate for Level 4 explicit calls, but we could wrap it.
-        # User requested specific Level 4 logic.
+    
+    def _get_consistent_voice(self, character: str, gender: str, provider: str) -> str:
+        """
+        Get a consistent voice ID/name for a character based on their name hash.
+        Currently only implements complex logic for ElevenLabs.
+        """
+        if provider != "elevenlabs":
+            # For other providers, use simple defaults for now (or expand later)
+            # Google/Azure/OpenAI generally have fewer distinct "character" voices readily mapped
+            # mapped in VOICE_MAP without extra work, so fall back to gender default.
+            
+            if provider == "openai":
+                 return VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+            
+            # Simple gender mapping for others
+            voices = VOICE_MAP[provider].get(gender, {})
+            # If voices is a dict (like google), pick first?
+            # Actually VOICE_MAP structure varies.
+            # Azure: by Lang. Google: by Lang->Gender.
+            # This helper is primarily for the ElevenLabs pool logic requested.
+            return None
+
+        # ElevenLabs Deterministic Logic
+        pool = VOICE_MAP["elevenlabs"]["pool"].get(gender, VOICE_MAP["elevenlabs"]["pool"]["male"])
+        
+        # Use hashlib for stable hashing across runs (unlike python's hash())
+        import hashlib
+        hash_obj = hashlib.md5(character.encode())
+        hash_int = int(hash_obj.hexdigest(), 16)
+        
+        voice_index = hash_int % len(pool)
+        selected_voice = pool[voice_index]
+        print(f"   [Voice Assignment] '{character}' ({gender}) -> {selected_voice} (Index: {voice_index})")
+        return selected_voice
         
     def _get_monthly_usage(self) -> int:
         """Read current month's Azure usage from file."""
@@ -146,12 +215,17 @@ class TTSManager:
 
     async def generate(self, segment: Dict, output_file: str, user_tier: str = "free", elevenlabs_key: str = None) -> None:
         text = segment["text"]
+        character = segment.get("character", "Narrator")
         seg_type = segment["type"]
         emotion = segment.get("emotion", "neutral")
         gender = segment.get("gender", "male")
         
         provider_name = self.select_provider(seg_type, text, user_tier, emotion)
-        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Emotion: {emotion})")
+        
+        # Calculate consistent voice (mostly for ElevenLabs now)
+        specific_voice_id = self._get_consistent_voice(character, gender, provider_name)
+        
+        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'})")
         
         # Execute based on provider
         if provider_name == "azure":
@@ -183,7 +257,7 @@ class TTSManager:
         elif provider_name == "elevenlabs":
             if not elevenlabs_key:
                 raise ValueError("ElevenLabs API key required for ElevenLabs generation")
-            await _generate_with_elevenlabs(text, gender, output_file, elevenlabs_key)
+            await _generate_with_elevenlabs(text, gender, output_file, elevenlabs_key, voice_id_override=specific_voice_id)
             
         else:
             raise Exception(f"Unknown or unsupported provider: {provider_name}")
@@ -238,14 +312,20 @@ async def _generate_with_elevenlabs(
     gender: str,
     output_file: str,
     api_key: str,
-    max_retries: int = 3
+    max_retries: int = 3,
+    voice_id_override: str = None
 ) -> None:
     """
     Generate audio using ElevenLabs (paid) with retry mechanism.
     (Preserved from previous version)
     """
     client = ElevenLabs(api_key=api_key)
-    voice_name = VOICE_MAP["elevenlabs"].get(gender.lower(), VOICE_MAP["elevenlabs"]["male"])
+    
+    if voice_id_override:
+        voice_name = voice_id_override
+    else:
+        # Fallback to defaults if no override
+        voice_name = VOICE_MAP["elevenlabs"].get(gender.lower(), VOICE_MAP["elevenlabs"]["male"])
     
     loop = asyncio.get_event_loop()
     
