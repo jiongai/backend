@@ -18,6 +18,7 @@ from .tts_providers import (
     TTSProvider
 )
 from elevenlabs.client import ElevenLabs
+from elevenlabs import VoiceSettings
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION
@@ -86,6 +87,21 @@ VOICE_MAP = {
             ]
         }
     }
+}
+
+# Emotion -> Voice Settings Mapping
+# Stability: Low = more emotion/varaiance. High = stable/monotone.
+# Similarity: High = clearer identity. Low = more fuzzy/creative.
+# Style: High = exaggerated.
+EMOTION_SETTINGS = {
+    "neutral":    {"stability": 0.60, "similarity_boost": 0.75, "style": 0.0},
+    "happy":      {"stability": 0.45, "similarity_boost": 0.80, "style": 0.3},
+    "sad":        {"stability": 0.40, "similarity_boost": 0.70, "style": 0.2},
+    "angry":      {"stability": 0.30, "similarity_boost": 0.80, "style": 0.6},
+    "fearful":    {"stability": 0.30, "similarity_boost": 0.65, "style": 0.5},
+    "surprised":  {"stability": 0.35, "similarity_boost": 0.75, "style": 0.4},
+    "whispering": {"stability": 0.50, "similarity_boost": 0.50, "style": 0.0}, # Low similarity allows breathiness
+    "shouting":   {"stability": 0.25, "similarity_boost": 0.80, "style": 0.7},
 }
 
 class TTSManager:
@@ -225,7 +241,10 @@ class TTSManager:
         # Calculate consistent voice (mostly for ElevenLabs now)
         specific_voice_id = self._get_consistent_voice(character, gender, provider_name)
         
-        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'})")
+        # Determine emotion settings
+        settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
+        
+        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'}, Settings: {settings})")
         
         # Execute based on provider
         if provider_name == "azure":
@@ -257,7 +276,14 @@ class TTSManager:
         elif provider_name == "elevenlabs":
             if not elevenlabs_key:
                 raise ValueError("ElevenLabs API key required for ElevenLabs generation")
-            await _generate_with_elevenlabs(text, gender, output_file, elevenlabs_key, voice_id_override=specific_voice_id)
+            await _generate_with_elevenlabs(
+                text, 
+                gender, 
+                output_file, 
+                elevenlabs_key, 
+                voice_id_override=specific_voice_id,
+                settings_dict=settings
+            )
             
         else:
             raise Exception(f"Unknown or unsupported provider: {provider_name}")
@@ -313,7 +339,8 @@ async def _generate_with_elevenlabs(
     output_file: str,
     api_key: str,
     max_retries: int = 3,
-    voice_id_override: str = None
+    voice_id_override: str = None,
+    settings_dict: dict = None
 ) -> None:
     """
     Generate audio using ElevenLabs (paid) with retry mechanism.
@@ -334,10 +361,21 @@ async def _generate_with_elevenlabs(
             print(f"   [ElevenLabs] Starting attempt {attempt+1}/{max_retries}...")
             
             def _call_elevenlabs():
+                # Prepare settings if provided
+                v_settings = None
+                if settings_dict:
+                    v_settings = VoiceSettings(
+                        stability=settings_dict.get("stability", 0.5),
+                        similarity_boost=settings_dict.get("similarity_boost", 0.75),
+                        style=settings_dict.get("style", 0.0),
+                        use_speaker_boost=True
+                    )
+
                 return client.text_to_speech.convert(
                     voice_id=voice_name,
                     text=text,
-                    model_id="eleven_turbo_v2_5"
+                    model_id="eleven_turbo_v2_5",
+                    voice_settings=v_settings
                 )
 
             # 60s timeout
