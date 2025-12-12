@@ -213,15 +213,15 @@ async def generate_audio_drama(
             print(f"Detected English text. Using narrator: en-US-BrianNeural")
         
         # Step 2: Generate audio - Phase 1: Narration (Free)
-        # We generate narration first so that if Edge TTS fails, we don't waste ElevenLabs credits
-        print("Phase 1: Generating Narration (Edge TTS)...")
+        # We generate narration first
+        print("Phase 1: Generating Narration..." )
         
         script_with_indices = list(enumerate(script))
         narration_items = [(i, seg) for i, seg in script_with_indices if seg["type"] == "narration"]
         dialogue_items = [(i, seg) for i, seg in script_with_indices if seg["type"] == "dialogue"]
         
         # Generate Narration
-        # Note: audio_engine has its own global semaphore for EdgeTTS concurrency
+        # Note: audio_engine handles concurrency internally
         narration_tasks = [
             generate_segment_audio(
                 segment=seg,
