@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import re
 
-from app.services.audio_engine import generate_segment_audio
-from app.services.post_production import merge_audio_and_generate_srt
+from .audio_engine import generate_segment_audio
+from .post_production import merge_audio_and_generate_srt
 
 async def synthesize_drama(
     script: List[Dict],
