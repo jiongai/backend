@@ -107,8 +107,8 @@ async def _analyze_chunk(client: httpx.AsyncClient, chunk_text: str, api_key: st
                 # Ensure the text is properly JSON escaped and quoted
                 return json.dumps(text_content)
             
-            # Regex to find <<< content >>> across newlines (DOTALL)
-            fixed_content = re.sub(r'<<<(.*?)>>>', replace_brackets, content, flags=re.DOTALL)
+            # Regex to find <<< content >>> (tolerant of 2 or 3 closing brackets)
+            fixed_content = re.sub(r'<<<(.*?)>{2,3}', replace_brackets, content, flags=re.DOTALL)
             
             parsed = dirtyjson.loads(fixed_content)
             
@@ -123,6 +123,19 @@ async def _analyze_chunk(client: httpx.AsyncClient, chunk_text: str, api_key: st
         except Exception as e:
             if attempt == max_retries:
                 print(f"❌ Chunk {chunk_index} error: {e}")
+                
+                # Debug: Print the problematic content for inspection
+                try:
+                    print(f"--- FAILED CONTENT CHUNK {chunk_index} ---")
+                    # If 'fixed_content' exists in local scope, print it, else raw content
+                    if 'fixed_content' in locals():
+                        print(fixed_content[:1000] + "..." if len(fixed_content) > 1000 else fixed_content)
+                    elif 'content' in locals():
+                         print(content[:1000] + "..." if len(content) > 1000 else content)
+                    print("--- END FAILED CONTENT ---")
+                except:
+                    pass
+                    
                 return []
             await asyncio.sleep(1) # Backoff
             
