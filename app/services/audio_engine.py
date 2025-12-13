@@ -36,8 +36,33 @@ VOICE_MAP = {
     },
     # Level 2: Google (Standard/Wavenet Fallback)
     "google": {
+        # Defaults
         "en": {"male": "en-US-Neural2-J", "female": "en-US-Neural2-F"},
-        "zh": {"male": "cmn-CN-Wavenet-C", "female": "cmn-CN-Wavenet-A"}
+        "zh": {"male": "cmn-CN-Wavenet-C", "female": "cmn-CN-Wavenet-A"},
+        
+        # Extended Voice Pool
+        "pool": {
+            "zh": {
+                "female": [
+                    "cmn-CN-Wavenet-A", "cmn-CN-Wavenet-D", # Wavenet
+                    "cmn-CN-Neural2-F", "cmn-TW-Wavenet-A"  # Neural2 / TW
+                ],
+                "male": [
+                    "cmn-CN-Wavenet-C", "cmn-CN-Wavenet-B",
+                    "cmn-CN-Neural2-C"
+                ]
+            },
+            "en": {
+                "female": [
+                    "en-US-Neural2-C", "en-US-Neural2-E", "en-US-Neural2-F", "en-US-Neural2-G", "en-US-Neural2-H",
+                    "en-US-Wavenet-C", "en-US-Wavenet-E", "en-US-Wavenet-F", "en-GB-Neural2-A", "en-GB-Neural2-C"
+                ],
+                "male": [
+                    "en-US-Neural2-A", "en-US-Neural2-D", "en-US-Neural2-I", "en-US-Neural2-J",
+                    "en-US-Wavenet-A", "en-US-Wavenet-B", "en-US-Wavenet-D", "en-GB-Neural2-B", "en-GB-Neural2-D"
+                ]
+            }
+        }
     },
     # Level 3: OpenAI (VIP Narration)
     "openai": {
@@ -112,38 +137,47 @@ class TTSManager:
             "openai": OpenAITTSProvider()
         }
     
-    def _get_consistent_voice(self, character: str, gender: str, provider: str) -> str:
+    def _get_consistent_voice(self, character: str, gender: str, provider: str, lang: str = "en") -> str:
         """
         Get a consistent voice ID/name for a character based on their name hash.
-        Currently only implements complex logic for ElevenLabs.
         """
-        if provider != "elevenlabs":
-            # For other providers, use simple defaults for now (or expand later)
-            # Google/Azure/OpenAI generally have fewer distinct "character" voices readily mapped
-            # mapped in VOICE_MAP without extra work, so fall back to gender default.
+        if provider == "openai":
+                return VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+        
+        # Support both Google and ElevenLabs pools
+        target_pool = None
+        
+        if provider == "elevenlabs":
+            target_pool = VOICE_MAP["elevenlabs"]["pool"].get(gender, VOICE_MAP["elevenlabs"]["pool"]["male"])
+        elif provider == "google":
+            # Default to English if lang not in map (e.g. unknown)
+            if lang not in VOICE_MAP["google"]["pool"]:
+                lang = "en"
             
-            if provider == "openai":
-                 return VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+            # Google pool structure: pool -> lang -> gender
+            lang_pool = VOICE_MAP["google"]["pool"].get(lang)
+            if lang_pool:
+                target_pool = lang_pool.get(gender, lang_pool.get("male"))
+
+        if not target_pool:
+            # Fallback for Azure or if pool not found
+            # Azure logic is simple (one voice per lang)
+            if provider == "azure":
+                 # Azure mapping is direct in VOICE_MAP['azure'][lang]
+                 # Not pool-based
+                 return VOICE_MAP["azure"].get(lang, "en-US-BrianNeural")
             
-            # Simple gender mapping for others
-            voices = VOICE_MAP[provider].get(gender, {})
-            # If voices is a dict (like google), pick first?
-            # Actually VOICE_MAP structure varies.
-            # Azure: by Lang. Google: by Lang->Gender.
-            # This helper is primarily for the ElevenLabs pool logic requested.
+            # Generic fallback
             return None
 
-        # ElevenLabs Deterministic Logic
-        pool = VOICE_MAP["elevenlabs"]["pool"].get(gender, VOICE_MAP["elevenlabs"]["pool"]["male"])
-        
-        # Use hashlib for stable hashing across runs (unlike python's hash())
+        # Deterministic Logic (Hash)
         import hashlib
         hash_obj = hashlib.md5(character.encode())
         hash_int = int(hash_obj.hexdigest(), 16)
         
-        voice_index = hash_int % len(pool)
-        selected_voice = pool[voice_index]
-        print(f"   [Voice Assignment] '{character}' ({gender}) -> {selected_voice} (Index: {voice_index})")
+        voice_index = hash_int % len(target_pool)
+        selected_voice = target_pool[voice_index]
+        print(f"   [Voice Assignment] '{character}' ({gender}) -> {provider.upper()}: {selected_voice} (Index: {voice_index})")
         return selected_voice
         
     def _get_monthly_usage(self) -> int:
@@ -182,31 +216,25 @@ class TTSManager:
         """
         Determine which provider to use based on Hybrid Routing rules.
         
-        Levels:
-        1. Azure: Narration, Free User, Limit < 500k
-        2. Google: Narration, Free User, Limit exhausted
-        3. OpenAI: Narration, VIP User
-        4. ElevenLabs: Dialogue with Emotion
+        Strategies:
+        1. Dialogue:
+           - VIP: ElevenLabs (High Emotion)
+           - Free: Google (Standard)
+        2. Narration:
+           - VIP: OpenAI (High Quality)
+           - Free: Azure (if quota) -> Google
         """
         chars = len(text)
         
-        # Priority 1: High Emotion Dialogue -> ElevenLabs (Level 4)
+        # Priority 1: Dialogue
         if segment_type == "dialogue":
-            # Check for strong emotions
-            strong_emotions = ["angry", "sad", "fearful", "shouting", "crying"]
-            if emotion and emotion.lower() in strong_emotions:
+            if user_tier == "vip":
                 return "elevenlabs"
-            # For neutral dialogue? 
-            # User said: "Only those with emotion tags... call ElevenLabs"
-            # Implies neutral dialogue might fallback?
-            # Let's assume neutral dialogue goes to OpenAI (L3) or Google (L2) based on tier?
-            # Or maybe just use ElevenLabs for all dialogue for now to be safe,
-            # but user emphasized "Good steel on blade edge".
-            # For simplicity in this iteration: All dialogue -> ElevenLabs (as per old logic), 
-            # BUT we can optimize later.
-            return "elevenlabs" 
+            else:
+                # Free users get Google for dialogue
+                return "google"
 
-        # Narration Logic
+        # Priority 2: Narration
         if segment_type == "narration":
             # Level 3: VIP User -> OpenAI
             if user_tier == "vip":
@@ -222,12 +250,12 @@ class TTSManager:
             if self.providers["google"].is_enabled:
                 return "google"
                 
-            # Fallback of Fallback: If Google not enabled, try OpenAI if enabled?
+            # Fallback of Fallback
             if self.providers["openai"].is_enabled:
                 return "openai"
                 
         # Default fallback
-        return "elevenlabs" if segment_type == "dialogue" else "google"
+        return "google"
 
     async def generate(self, segment: Dict, output_file: str, user_tier: str = "free", elevenlabs_key: str = None) -> None:
         text = segment["text"]
@@ -236,42 +264,46 @@ class TTSManager:
         emotion = segment.get("emotion", "neutral")
         gender = segment.get("gender", "male")
         
+        # Detect language (needed for voice selection)
+        import re
+        is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+        lang_key = "zh" if is_chinese else "en"
+        
         provider_name = self.select_provider(seg_type, text, user_tier, emotion)
         
-        # Calculate consistent voice (mostly for ElevenLabs now)
-        specific_voice_id = self._get_consistent_voice(character, gender, provider_name)
+        # Calculate consistent voice
+        specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
         
-        # Determine emotion settings
+        # Determine emotion settings (Only for ElevenLabs currently)
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
         
-        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'}, Settings: {settings})")
+        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'})")
         
         # Execute based on provider
         if provider_name == "azure":
-            # Detect language for voice selection
-            import re
-            is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-            lang_key = "zh" if is_chinese else "en"
-            voice = VOICE_MAP["azure"][lang_key]
+            # specific_voice_id from _get_consistent_voice might be None or correct
+            # For Azure, let's trust _get_consistent_voice returned the map value
+            if not specific_voice_id:
+                 specific_voice_id = VOICE_MAP["azure"][lang_key]
             
-            await self.providers["azure"].generate(text, output_file, voice)
+            await self.providers["azure"].generate(text, output_file, specific_voice_id)
             self._increment_usage(len(text))
             
         elif provider_name == "google":
-            import re
-            is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-            lang_key = "zh" if is_chinese else "en"
-            # Use gender if available, otherwise default
-            voice_dict = VOICE_MAP["google"][lang_key]
-            voice = voice_dict.get(gender, list(voice_dict.values())[0])
+            # Ensure specific_voice_id is set (from pool)
+            if not specific_voice_id:
+                 # Fallback if hash failed
+                 voice_dict = VOICE_MAP["google"][lang_key]
+                 specific_voice_id = voice_dict.get(gender, list(voice_dict.values())[0])
             
-            await self.providers["google"].generate(text, output_file, voice)
+            await self.providers["google"].generate(text, output_file, specific_voice_id)
             
         elif provider_name == "openai":
-            # Map gender to voice
-            voice = VOICES_MAP["openai"]["male"] if gender == "male" else VOICES_MAP["openai"]["female"]
-            # OpenAI voice param is just the name
-            await self.providers["openai"].generate(text, output_file, voice)
+            # specific_voice_id should be 'onyx' or 'alloy'
+            if not specific_voice_id:
+                 specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+                 
+            await self.providers["openai"].generate(text, output_file, specific_voice_id)
             
         elif provider_name == "elevenlabs":
             if not elevenlabs_key:
