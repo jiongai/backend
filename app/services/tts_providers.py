@@ -26,7 +26,7 @@ class TTSProvider(ABC):
     """Abstract base class for TTS providers."""
     
     @abstractmethod
-    async def generate(self, text: str, output_file: str, voice: str) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
         """Generate audio from text."""
         pass
     
@@ -53,7 +53,7 @@ class AzureTTSProvider(TTSProvider):
     def is_enabled(self) -> bool:
         return self._enabled
         
-    async def generate(self, text: str, output_file: str, voice: str) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
         if not self._enabled:
             raise Exception("Azure TTS is not configured or dependencies missing")
             
@@ -110,7 +110,7 @@ class GoogleTTSProvider(TTSProvider):
                 self._client = texttospeech.TextToSpeechClient()
         return self._client
         
-    async def generate(self, text: str, output_file: str, voice: str) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
         if not self._enabled:
             raise Exception("Google TTS is not configured or dependencies missing")
             
@@ -127,7 +127,8 @@ class GoogleTTSProvider(TTSProvider):
         )
         
         audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.MP3
+            audio_encoding=texttospeech.AudioEncoding.MP3,
+            speaking_rate=speed
         )
         
         # Async call wrapper
@@ -167,7 +168,7 @@ class OpenAITTSProvider(TTSProvider):
             self._client = AsyncOpenAI(api_key=self.api_key)
         return self._client
         
-    async def generate(self, text: str, output_file: str, voice: str) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
         if not self._enabled:
             raise Exception("OpenAI TTS is not configured or dependencies missing")
             
@@ -182,7 +183,8 @@ class OpenAITTSProvider(TTSProvider):
         response = await client.audio.speech.create(
             model=model,
             voice=voice_id,
-            input=text
+            input=text,
+            speed=speed
         )
         
         response.stream_to_file(output_file)

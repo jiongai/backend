@@ -45,11 +45,11 @@ VOICE_MAP = {
             "zh": {
                 "female": [
                     "cmn-CN-Wavenet-A", "cmn-CN-Wavenet-D", # Wavenet
-                    "cmn-CN-Neural2-F", "cmn-TW-Wavenet-A"  # Neural2 / TW
+                    "cmn-TW-Wavenet-A"  # TW Wavenet
                 ],
                 "male": [
                     "cmn-CN-Wavenet-C", "cmn-CN-Wavenet-B",
-                    "cmn-CN-Neural2-C"
+                    "cmn-TW-Wavenet-B", "cmn-TW-Wavenet-C"
                 ]
             },
             "en": {
@@ -263,6 +263,7 @@ class TTSManager:
         seg_type = segment["type"]
         emotion = segment.get("emotion", "neutral")
         gender = segment.get("gender", "male")
+        pacing = float(segment.get("pacing", 1.0))
         
         # Detect language (needed for voice selection)
         import re
@@ -277,7 +278,7 @@ class TTSManager:
         # Determine emotion settings (Only for ElevenLabs currently)
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
         
-        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'})")
+        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'}, Settings: {settings}, Speed: {pacing})")
         
         # Execute based on provider
         if provider_name == "azure":
@@ -286,7 +287,7 @@ class TTSManager:
             if not specific_voice_id:
                  specific_voice_id = VOICE_MAP["azure"][lang_key]
             
-            await self.providers["azure"].generate(text, output_file, specific_voice_id)
+            await self.providers["azure"].generate(text, output_file, specific_voice_id, speed=pacing)
             self._increment_usage(len(text))
             
         elif provider_name == "google":
@@ -296,14 +297,14 @@ class TTSManager:
                  voice_dict = VOICE_MAP["google"][lang_key]
                  specific_voice_id = voice_dict.get(gender, list(voice_dict.values())[0])
             
-            await self.providers["google"].generate(text, output_file, specific_voice_id)
+            await self.providers["google"].generate(text, output_file, specific_voice_id, speed=pacing)
             
         elif provider_name == "openai":
             # specific_voice_id should be 'onyx' or 'alloy'
             if not specific_voice_id:
                  specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
                  
-            await self.providers["openai"].generate(text, output_file, specific_voice_id)
+            await self.providers["openai"].generate(text, output_file, specific_voice_id, speed=pacing)
             
         elif provider_name == "elevenlabs":
             if not elevenlabs_key:
