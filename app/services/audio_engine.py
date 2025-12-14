@@ -273,19 +273,41 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text_sample))
         lang_key = "zh" if is_chinese else "en"
         
-        # 2. Determine provider based on Tier (Narrator Logic)
-        # VIP -> OpenAI, Free -> Azure (fallback logic simplified here)
-        narration_provider = "openai" if user_tier == "vip" else "azure"
+        # Check for Manual Voice Override (Narrator)
+        manual_voice = first_narration.get("voice")
+        is_override = False
         
-        # 3. Get Voice ID
-        voice_id = None
-        if narration_provider == "openai":
-             # Default assumption
-             voice_id = VOICE_MAP["openai"]["male"] # Onyx
-        else:
-             # Azure
-             voice_id = VOICE_MAP["azure"].get(lang_key, "en-US-BrianNeural")
+        if manual_voice and manual_voice != "待定" and isinstance(manual_voice, str) and manual_voice.strip():
+             is_override = True
+             voice_id = manual_voice.strip()
              
+             # Resolve Provider from ID (Simplified heuristic)
+             if voice_id in list(VOICE_MAP["openai"].values()):
+                 narration_provider = "openai"
+             elif voice_id in list(VOICE_MAP["azure"].values()) or voice_id in ["en-US-BrianNeural", "zh-CN-YunxiNeural"]:
+                 narration_provider = "azure"
+             elif "Neural2" in voice_id or "Wavenet" in voice_id:
+                 narration_provider = "google"
+             elif len(voice_id) > 15:
+                 narration_provider = "elevenlabs"
+             else:
+                 narration_provider = "unknown"
+                 
+        else:
+            # Default Logic
+            # 2. Determine provider based on Tier (Narrator Logic)
+            # VIP -> OpenAI, Free -> Azure (fallback logic simplified here)
+            narration_provider = "openai" if user_tier == "vip" else "azure"
+            
+            # 3. Get Voice ID
+            voice_id = None
+            if narration_provider == "openai":
+                 # Default assumption
+                 voice_id = VOICE_MAP["openai"]["male"] # Onyx
+            else:
+                 # Azure
+                 voice_id = VOICE_MAP["azure"].get(lang_key, "en-US-BrianNeural")
+                         
         # Manual Override Check for Narrator could be here if supported, but simpler for now.
         
         cast_map["Narrator"] = {
@@ -293,6 +315,7 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
             "gender": "neutral", # Narrator is abstract
             "voice_provider": narration_provider,
             "voice_id": voice_id,
+
             "voice_name": VOICE_LABELS.get(voice_id, voice_id)
         }
     
@@ -304,20 +327,44 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         if not character or character in cast_map:
             continue
             
-        # Determine provider (assuming dialogue logic from select_provider)
-        # VIP -> ElevenLabs, Free -> Google
-        provider = "elevenlabs" if user_tier == "vip" else "google"
-        
         # Determine gender
         gender = segment.get("gender", "male")
         
-        # Detect language (simplified per segment)
-        is_chinese = bool(re.search(r'[\u4e00-\u9fff]', segment["text"]))
-        lang_key = "zh" if is_chinese else "en"
+        # Check for Manual Voice Override
+        manual_voice = segment.get("voice")
+        is_override = False
         
-        # Get voice ID using the singleton manager's logic
-        # Accessing protected member _get_consistent_voice is acceptable here as it's within the same module/service logic
-        voice_id = tts_manager._get_consistent_voice(character, gender, provider, lang=lang_key)
+        if manual_voice and manual_voice != "待定" and isinstance(manual_voice, str) and manual_voice.strip():
+             is_override = True
+             voice_id = manual_voice.strip()
+             
+             # Resolve Provider from ID (Simplified heuristic)
+             if voice_id in list(VOICE_MAP["openai"].values()):
+                 provider = "openai"
+             elif voice_id in list(VOICE_MAP["azure"].values()) or voice_id in ["en-US-BrianNeural", "zh-CN-YunxiNeural"]:
+                 provider = "azure"
+             elif "Neural2" in voice_id or "Wavenet" in voice_id:
+                 provider = "google"
+             elif len(voice_id) > 15:
+                 provider = "elevenlabs"
+             else:
+                 provider = "unknown"
+                 
+        else:
+            # Default Logic
+            # Determine provider (assuming dialogue logic from select_provider)
+            # VIP -> ElevenLabs, Free -> Google
+            provider = "elevenlabs" if user_tier == "vip" else "google"
+            
+            # Detect language (simplified per segment)
+            is_chinese = bool(re.search(r'[\u4e00-\u9fff]', segment["text"]))
+            lang_key = "zh" if is_chinese else "en"
+            
+            # Get voice ID using the singleton manager's logic
+            voice_id = tts_manager._get_consistent_voice(character, gender, provider, lang=lang_key)
+        
+        # Get voice Name
+
         
         # Get voice Name
         voice_name = VOICE_LABELS.get(voice_id, voice_id)
