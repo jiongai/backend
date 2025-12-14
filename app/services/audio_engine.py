@@ -129,7 +129,215 @@ EMOTION_SETTINGS = {
     "shouting":   {"stability": 0.25, "similarity_boost": 0.80, "style": 0.7},
 }
 
+# Voice Samples (URLs)
+VOICE_SAMPLES = {
+    "openai": {
+        "alloy": "https://cdn.openai.com/API/docs/audio/alloy.wav",
+        "echo": "https://cdn.openai.com/API/docs/audio/echo.wav",
+        "fable": "https://cdn.openai.com/API/docs/audio/fable.wav",
+        "onyx": "https://cdn.openai.com/API/docs/audio/onyx.wav",
+        "nova": "https://cdn.openai.com/API/docs/audio/nova.wav",
+        "shimmer": "https://cdn.openai.com/API/docs/audio/shimmer.wav"
+    }
+}
+
+# Voice Labels (ID -> Name Map)
+VOICE_LABELS = {
+    # Azure
+    "en-US-BrianNeural": "Brian (Narrator)",
+    "zh-CN-YunxiNeural": "Yunxi (Narrator)",
+    
+    # Google (English)
+    "en-US-Neural2-A": "Male A (Neural2)",
+    "en-US-Neural2-C": "Female C (Neural2)",
+    "en-US-Neural2-D": "Male D (Neural2)",
+    "en-US-Neural2-E": "Female E (Neural2)",
+    "en-US-Neural2-F": "Female F (Neural2)",
+    "en-US-Neural2-G": "Female G (Neural2)",
+    "en-US-Neural2-H": "Female H (Neural2)",
+    "en-US-Neural2-I": "Male I (Neural2)",
+    "en-US-Neural2-J": "Male J (Neural2)",
+    "en-US-Wavenet-A": "Male A (Wavenet)",
+    "en-US-Wavenet-B": "Male B (Wavenet)",
+    "en-US-Wavenet-C": "Female C (Wavenet)",
+    "en-US-Wavenet-D": "Male D (Wavenet)",
+    "en-US-Wavenet-E": "Female E (Wavenet)",
+    "en-US-Wavenet-F": "Female F (Wavenet)",
+    "en-GB-Neural2-A": "Female A (UK Neural2)",
+    "en-GB-Neural2-B": "Male B (UK Neural2)",
+    "en-GB-Neural2-C": "Female C (UK Neural2)",
+    "en-GB-Neural2-D": "Male D (UK Neural2)",
+
+    # Google (Chinese)
+    "cmn-CN-Wavenet-A": "Female A (CN Wavenet)",
+    "cmn-CN-Wavenet-B": "Male B (CN Wavenet)",
+    "cmn-CN-Wavenet-C": "Male C (CN Wavenet)",
+    "cmn-CN-Wavenet-D": "Female D (CN Wavenet)",
+    "cmn-TW-Wavenet-A": "Female A (TW Wavenet)",
+    "cmn-TW-Wavenet-B": "Male B (TW Wavenet)",
+    "cmn-TW-Wavenet-C": "Male C (TW Wavenet)",
+
+    # OpenAI
+    "onyx": "Onyx (Deep Male)",
+    "alloy": "Alloy (Clear Female)",
+    "echo": "Echo (Narrator)",
+    "fable": "Fable (Expressive)",
+    "nova": "Nova (Energetic)",
+    "shimmer": "Shimmer (Soft)",
+
+    # ElevenLabs
+    "pNInz6obpgDQGcFmaJgB": "Adam (Deep)",
+    "21m00Tcm4TlvDq8ikWAM": "Rachel (Warm)",
+    "ErXwobaYiN019PkySvjV": "Antoni (Young)",
+    "VR6AewLTigWG4xSOukaG": "Arnold (Strong)",
+    "N2lVS1w4EtoT3dr4eOWO": "Callum (Calm)",
+    "IKne3meq5aSn9XLyUdCD": "Charlie (Friendly)",
+    "2EiwWnXFnvU5JabPnv8n": "Clyde (Warm)",
+    "CYw3kZ02Hs0563khs1Fj": "Dave (Young UK)",
+    "D38z5RcWu1voky8WS1ja": "Fin (Irish)",
+    "JBFqnCBsd6RMkjVDRZzb": "George (Formal UK)",
+    "TxGEqnHWrfWFTfGW9XjX": "Josh (News)",
+    "ODq5zmih8GrVes37Dizd": "Patrick (Authoritative)",
+    "yoZ06aMxZJJ28mfd3POQ": "Sam (Lively)",
+    "GBv7mTt0atIp3Br8iCZE": "Thomas (Gentle)",
+    "EXAVITQu4vr4xnSDxMaL": "Bella (Soft)",
+    "XB0fDUnXU5powFXDhCwa": "Charlotte (Elegant)",
+    "AZnzlk1XvdvUeBnXmlld": "Domi (Energetic)",
+    "ThT5KcBeYPX3keUQqHPh": "Dorothy (Wise)",
+    "MF3mGyEYCl7XYWbV9V6O": "Elli (Lively)",
+    "LcfcDJNUP1GQjkzn1xUU": "Emily (Calm)",
+    "jsCqWAovK2LkecY7zXl4": "Freya (Young US)",
+    "jBpfuIE2acCO8z3wKNLl": "Gigi (Enthusiastic)",
+    "z9fAnlkpzviPz146aGWa": "Glinda (Mysterious)",
+    "oWAxZDx7w5VEj9dCyTzz": "Grace (Southern)",
+    "cgSgspJ2msm6clMCkdW9": "Jessica (Professional)",
+    "pFZP5JQG7iQjIQuC4Bku": "Lily (Young UK)",
+    "XrExE9yKIg1WjnnlVkGX": "Matilda (Narrative)",
+    "piTKgcLEGmPE4e6mEKli": "Nicole (Energetic)"
+}
+
+def get_enriched_voice_map() -> Dict:
+    """
+    Return a copy of VOICE_MAP where every voice ID is 
+    replaced with {"id": "...", "name": "..."}.
+    """
+    import copy
+    
+    def enrich_node(node):
+        if isinstance(node, str):
+            # It's a voice ID (leaf)
+            return {
+                "id": node,
+                "name": VOICE_LABELS.get(node, node) # Fallback to ID if no name found
+            }
+        elif isinstance(node, dict):
+            return {k: enrich_node(v) for k, v in node.items()}
+        elif isinstance(node, list):
+            return [enrich_node(item) for item in node]
+        return node
+
+    # Deep copy to avoid mutating the original CONFIGURATION
+    raw_map = copy.deepcopy(VOICE_MAP)
+    # Deep copy to avoid mutating the original CONFIGURATION
+    raw_map = copy.deepcopy(VOICE_MAP)
+    return enrich_node(raw_map)
+
+def get_public_voice_groups() -> Dict:
+    """
+    Get the structured public voice groups (Basic/Advance).
+    """
+    full_map = get_enriched_voice_map()
+    return {
+        "Basic": full_map.get("google"),
+        "Advance": full_map.get("elevenlabs")
+    }
+
+def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
+    """
+    Generate metadata about the cast and voices used in the script.
+    Includes DIALOGUE characters AND Narrator.
+    """
+    cast_map = {} # character -> {voice_info}
+    import re
+    
+    # Pre-check for Narration
+    has_narration = any(s["type"] == "narration" for s in script)
+    narration_voice_info = None
+    
+    if has_narration:
+        # Determine Narrator Voice
+        # 1. Find the first narration segment to detect language
+        first_narration = next((s for s in script if s["type"] == "narration"), None)
+        text_sample = first_narration["text"] if first_narration else ""
+        
+        is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text_sample))
+        lang_key = "zh" if is_chinese else "en"
+        
+        # 2. Determine provider based on Tier (Narrator Logic)
+        # VIP -> OpenAI, Free -> Azure (fallback logic simplified here)
+        narration_provider = "openai" if user_tier == "vip" else "azure"
+        
+        # 3. Get Voice ID
+        voice_id = None
+        if narration_provider == "openai":
+             # Default assumption
+             voice_id = VOICE_MAP["openai"]["male"] # Onyx
+        else:
+             # Azure
+             voice_id = VOICE_MAP["azure"].get(lang_key, "en-US-BrianNeural")
+             
+        # Manual Override Check for Narrator could be here if supported, but simpler for now.
+        
+        cast_map["Narrator"] = {
+            "character": "Narrator",
+            "gender": "neutral", # Narrator is abstract
+            "voice_provider": narration_provider,
+            "voice_id": voice_id,
+            "voice_name": VOICE_LABELS.get(voice_id, voice_id)
+        }
+    
+    for segment in script:
+        if segment["type"] != "dialogue":
+            continue
+            
+        character = segment.get("character")
+        if not character or character in cast_map:
+            continue
+            
+        # Determine provider (assuming dialogue logic from select_provider)
+        # VIP -> ElevenLabs, Free -> Google
+        provider = "elevenlabs" if user_tier == "vip" else "google"
+        
+        # Determine gender
+        gender = segment.get("gender", "male")
+        
+        # Detect language (simplified per segment)
+        is_chinese = bool(re.search(r'[\u4e00-\u9fff]', segment["text"]))
+        lang_key = "zh" if is_chinese else "en"
+        
+        # Get voice ID using the singleton manager's logic
+        # Accessing protected member _get_consistent_voice is acceptable here as it's within the same module/service logic
+        voice_id = tts_manager._get_consistent_voice(character, gender, provider, lang=lang_key)
+        
+        # Get voice Name
+        voice_name = VOICE_LABELS.get(voice_id, voice_id)
+        
+        cast_map[character] = {
+            "character": character,
+            "gender": gender,
+            "voice_provider": provider,
+            "voice_id": voice_id,
+            "voice_name": voice_name
+        }
+        
+    return list(cast_map.values())
+
+        
+    return list(cast_map.values())
+
+
 class TTSManager:
+
     def __init__(self):
         self.providers = {
             "azure": AzureTTSProvider(),
@@ -265,15 +473,47 @@ class TTSManager:
         gender = segment.get("gender", "male")
         pacing = float(segment.get("pacing", 1.0))
         
-        # Detect language (needed for voice selection)
+
+        
+        # Check for manual voice override (new feature)
+        # If 'voice' is present, not empty, and not "待定", use it directly.
+        manual_voice = segment.get("voice")
+        is_manual_override = False
+        
+        if manual_voice and manual_voice != "待定" and isinstance(manual_voice, str) and manual_voice.strip():
+             is_manual_override = True
+             specific_voice_id = manual_voice.strip()
+        
+        # Detect language (needed for provider selection if not manual)
+
         import re
         is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
         lang_key = "zh" if is_chinese else "en"
         
         provider_name = self.select_provider(seg_type, text, user_tier, emotion)
         
-        # Calculate consistent voice
-        specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
+        if is_manual_override:
+            # Try to resolve provider from the voice ID
+            # 1. Check OpenAI
+            if specific_voice_id in list(VOICE_MAP["openai"].values()):
+                provider_name = "openai"
+                
+            # 2. Check Azure
+            elif specific_voice_id in list(VOICE_MAP["azure"].values()) or specific_voice_id in ["en-US-BrianNeural", "zh-CN-YunxiNeural"]:
+                provider_name = "azure"
+                
+            # 3. Check Google
+            elif "Neural2" in specific_voice_id or "Wavenet" in specific_voice_id:
+                provider_name = "google"
+                
+            # 4. Fallback/Default assumption: It's ElevenLabs if it looks like an ID (20 chars)
+            elif len(specific_voice_id) > 15: # ElevenLabs IDs are usually ~20 chars
+                provider_name = "elevenlabs"
+
+        # Calculate consistent voice (ONLY if not manual)
+        if not is_manual_override:
+             specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
+
         
         # Determine emotion settings (Only for ElevenLabs currently)
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])

@@ -4,8 +4,11 @@ import zipfile
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import re
+import json
 
-from .audio_engine import generate_segment_audio
+
+from .audio_engine import generate_segment_audio, generate_cast_metadata
+
 from .post_production import merge_audio_and_generate_srt
 
 async def synthesize_drama(
@@ -110,11 +113,24 @@ async def synthesize_drama(
     except Exception as e:
         raise Exception(f"Post-production failed: {str(e)}")
         
+    # Step 3.5: Generate metadata
+    print("   [Synthesizer] Generating cast metadata...")
+    cast_list = generate_cast_metadata(script, user_tier=user_tier)
+    roles_path = os.path.join(temp_dir, "roles.json")
+    try:
+        with open(roles_path, "w", encoding="utf-8") as f:
+            json.dump(cast_list, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Warning: Failed to write roles.json: {e}")
+
     # Step 4: Zip Package
     zip_path = os.path.join(temp_dir, "drama_package.zip")
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         zipf.write(final_audio_path, arcname="drama.mp3")
         zipf.write(final_srt_path, arcname="drama.srt")
+        if os.path.exists(roles_path):
+            zipf.write(roles_path, arcname="roles.json")
+
     
     print(f"   [Synthesizer] Created package: {zip_path}")
     return zip_path

@@ -20,8 +20,10 @@ Segment format:
     "character": "name or Narrator",
     "gender": "male" | "female",
     "emotion": "neutral" | "happy" | "sad" | "angry" | "fearful" | "surprised" | "whispering" | "shouting",
-    "pacing": 1.0 (float, 0.8=slow, 1.2=fast)
+    "pacing": 1.0 (float, 0.8=slow, 1.2=fast),
+    "voice": "待定"
 }
+
 
 Rules:
 - Split long narration (>30 words) for better pacing.
@@ -162,7 +164,12 @@ async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
     # 3. Merge Results
     full_script = []
     for chunk_script in results:
+        # Enforce default voice="待定" if missing
+        for segment in chunk_script:
+            if "voice" not in segment:
+                segment["voice"] = "待定"
         full_script.extend(chunk_script)
+
         
     if not full_script:
         raise ValueError("Failed to generate any script segments")

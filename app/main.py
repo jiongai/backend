@@ -57,8 +57,16 @@ from app.services import (
     analyze_text,
     generate_segment_audio,
     merge_audio_and_generate_srt,
+    VOICE_MAP,
+    EMOTION_SETTINGS,
+    VOICE_SAMPLES,
+    get_enriched_voice_map,
+    get_public_voice_groups,
     synthesize_drama
 )
+
+
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -313,6 +321,26 @@ async def analyze_only(
             status_code=500,
             detail=f"Failed to analyze text: {str(e)}"
         )
+
+
+@app.get("/voices", response_model=dict)
+async def get_available_voices():
+    """
+    Get configuration of available voices and settings.
+    Returns:
+    - voice_map: { "Basic": <Google>, "Advance": <ElevenLabs> }
+    - emotion_settings: Emotion parameters
+    - samples: Voice sample URLs
+    """
+    return {
+        "voice_map": get_public_voice_groups(),
+        "emotion_settings": EMOTION_SETTINGS,
+        "samples": VOICE_SAMPLES
+    }
+
+
+
+
 
 
 # Run the app
