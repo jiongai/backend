@@ -115,7 +115,18 @@ class DramaResponse(BaseModel):
     """Response model for audio drama generation."""
     message: str
     segments_count: int
+class DramaResponse(BaseModel):
+    """Response model for audio drama generation."""
+    message: str
+    segments_count: int
     audio_duration_ms: Optional[int] = None
+
+class ReviewRequest(BaseModel):
+    """Request model for voice preview/review."""
+    text: str = Field(..., description="Text to speak", max_length=100)
+    voice_id: str = Field(..., description="Voice ID to test")
+
+
 
 
 # Helper function for cleanup
@@ -282,6 +293,70 @@ async def generate_audio_drama(
             detail=f"Failed to generate audio drama: {str(e)}"
         )
 
+@app.post("/review", response_class=FileResponse)
+async def review_voice(
+    request: ReviewRequest,
+    background_tasks: BackgroundTasks,
+    elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key"),
+    user_tier: str = Header("free", alias="X-User-Tier")
+):
+    """
+    Generate a single audio clip for previewing a voice.
+    """
+    elevenlabs_key = elevenlabs_api_key or os.getenv("ELEVENLABS_API_KEY")
+    
+    # Create temp dir
+    temp_dir = tempfile.mkdtemp(prefix="dramaflow_review_")
+    output_file = Path(temp_dir) / "preview.mp3"
+    
+    try:
+        # Construct a temporary segment forcing the voice
+        # Truncate text to first 30 chars for preview
+        truncated_text = request.text[:30]
+        
+        segment = {
+            "type": "dialogue", # Broadest compatibility
+            "text": truncated_text,
+            "character": "Preview",
+            "voice": request.voice_id, # Manually override
+            "pacing": 1.0,
+            "emotion": "neutral" 
+        }
+
+        
+        # We use generate_segment_audio's logic but direct via tts_manager is better controlled
+        # But wait, tts_manager.generate() is what we want because it handles the 'voice' logic we just added.
+        # We need to access the singleton tts_manager used inside services.
+        # It's not directly imported here, but `generate_segment_audio` is a wrapper around it.
+        # Let's use `generate_segment_audio` as it exposes `user_tier` and `elevenlabs_api_key`
+        
+        await generate_segment_audio(
+            segment=segment,
+            output_dir=temp_dir,
+            elevenlabs_api_key=elevenlabs_key,
+            user_tier=user_tier
+        )
+        
+        # Find the generated file (name is hashed)
+        files = list(Path(temp_dir).glob("*.mp3"))
+        if not files:
+            raise Exception("Audio generation failed (no file produced)")
+            
+        generated_file = files[0]
+        
+        # Schedule cleanup
+        background_tasks.add_task(cleanup_temp_directory, temp_dir)
+        
+        return FileResponse(
+            path=generated_file,
+            media_type="audio/mpeg",
+            filename="preview.mp3"
+        )
+
+    except Exception as e:
+        cleanup_temp_directory(temp_dir)
+        print(f"Review generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/analyze", response_model=dict)
 async def analyze_only(

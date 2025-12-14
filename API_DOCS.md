@@ -11,7 +11,9 @@
     - [POST /generate](#23-post-generate) (全流程生成)
 3. [配置与辅助](#3-配置与辅助)
     - [GET /voices](#31-get-voices) (获取声音配置)
-    - [GET /health](#32-get-health) (健康检查)
+    - [POST /review](#32-post-review) (声音试听)
+    - [GET /health](#33-get-health) (健康检查)
+
 
 ---
 
@@ -171,7 +173,29 @@
 
 ---
 
-### 3.2 GET `/health`
+
+### 3.2 POST `/review`
+
+生成一段试听音频。用于前端用户在调整 `voice` 参数时，实时预览该声音的效果。
+
+- **URL**: `/review`
+- **Body**: JSON
+
+#### 请求参数 (Body)
+
+| 参数名 | 类型 | 必填 | 限制 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `text` | string | 是 | Max 100 字符 | 试听文本内容。**注意：系统实际只会合成前 30 个字符。** |
+| `voice_id` | string | 是 | - | 目标 Voice ID (如 "en-US-Neural2-J") |
+
+
+#### 响应
+- **Content-Type**: `audio/mpeg`
+- **内容**: 生成的 MP3 音频文件流。
+
+
+### 3.3 GET `/health`
+
 
 详细健康检查，确认 API Key 是否配置。
 
