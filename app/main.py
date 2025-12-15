@@ -8,7 +8,9 @@ import shutil
 import asyncio
 import tempfile
 import zipfile
+import json
 from pathlib import Path
+
 from typing import Optional
 
 # ========================================
@@ -195,7 +197,10 @@ async def synthesize_audio_drama(
     temp_dir = tempfile.mkdtemp(prefix="dramaflow_synth_")
     
     try:
+        print(f"   [DEBUG] /synthesize params - User Tier: {user_tier}")
+        print(f"   [DEBUG] /synthesize params - Script:\n{json.dumps(request.script, ensure_ascii=False, indent=2)}")
         print(f"Synthesizing from provided script ({len(request.script)} segments)...")
+
         
         zip_path = await synthesize_drama(
             script=request.script,
