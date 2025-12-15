@@ -116,6 +116,8 @@ async def synthesize_drama(
     # Step 3.5: Generate metadata
     print("   [Synthesizer] Generating cast metadata...")
     cast_list = generate_cast_metadata(script, user_tier=user_tier)
+    print(f"   [DEBUG] roles.json content:\n{json.dumps(cast_list, ensure_ascii=False, indent=2)}")
+
     roles_path = os.path.join(temp_dir, "roles.json")
     try:
         with open(roles_path, "w", encoding="utf-8") as f:

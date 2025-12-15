@@ -42,28 +42,29 @@ else:
     print("ℹ️  [main] Running locally or on Railway, using system ffmpeg")
 # ========================================
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # Load environment variables FIRST
 load_dotenv()
 
-from app.services import (
-    analyze_text,
+from app.services.analyzer import analyze_text, analyze_text_doubao
+from app.services.synthesizer import synthesize_drama
+from app.services.audio_engine import (
+    generate_cast_metadata,
+    tts_manager,
     generate_segment_audio,
-    analyze_text,
-    generate_segment_audio,
-    merge_audio_and_generate_srt,
     VOICE_MAP,
     EMOTION_SETTINGS,
     VOICE_SAMPLES,
     get_enriched_voice_map,
-    get_public_voice_groups,
-    synthesize_drama
+    get_public_voice_groups
 )
+from app.services.post_production import merge_audio_and_generate_srt
+
 
 
 
@@ -396,6 +397,46 @@ async def analyze_only(
             status_code=500,
             detail=f"Failed to analyze text: {str(e)}"
         )
+
+@app.post("/analyze_lite", response_model=dict)
+async def analyze_lite(
+    request: DramaRequest,
+    ark_api_key: Optional[str] = Header(None, alias="X-Ark-API-Key")
+):
+    """
+    Analyze text using Doubao (Volcengine Ark).
+    Same input/output format as /analyze.
+    """
+    # Get API key
+    ark_key = ark_api_key or os.getenv("ARK_API_KEY")
+    
+    if not ark_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Ark API key is required (X-Ark-API-Key header or ARK_API_KEY env)"
+        )
+    
+    try:
+        # Analyze text using Doubao
+        result = await analyze_text_doubao(request.text, ark_key)
+        
+        # Add metadata (Same logic as standard analyze)
+        if "script" in result:
+            result["metadata"] = {
+                "segments_count": len(result["script"]),
+                "narration_count": sum(1 for s in result["script"] if s.get("type") == "narration"),
+                "dialogue_count": sum(1 for s in result["script"] if s.get("type") == "dialogue"),
+                "characters": list(set(s.get("character", "") for s in result["script"] if s.get("character")))
+            }
+        
+        return result
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze text (Lite): {str(e)}"
+        )
+
 
 
 @app.get("/voices", response_model=dict)

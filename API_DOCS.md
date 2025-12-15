@@ -34,12 +34,15 @@
 
 ## 2. 核心功能
 
-### 2.1 POST `/analyze`
+### 2.2 POST `/analyze` / `/analyze_lite`
 
-解析小说文本，将其转换为结构化的音频剧脚本。此接口**不生成音频**，仅用于预览。
+仅进行文本分析，返回剧本 JSON，不进行音频合成。用于前端预览和修改剧本。
+*   `/analyze`: 使用 OpenRouter (Claude/GPT)
+*   `/analyze_lite`: 使用 Doubao (Volcengine)
 
-- **URL**: `/analyze`
+- **URL**: `/analyze` 或 `/analyze_lite`
 - **Body**: JSON
+
 
 #### 请求参数 (Body)
 

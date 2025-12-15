@@ -9,6 +9,12 @@ import asyncio
 from typing import Dict, Any, List
 import re
 import json
+import os
+try:
+    from openai import AsyncOpenAI
+except ImportError:
+    AsyncOpenAI = None
+
 
 
 SYSTEM_PROMPT = """You are an expert Audio Drama Director. Convert novel text into a structured JSON script. Output strictly a JSON object with a key script containing a list of segments.
@@ -176,3 +182,92 @@ async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
         
     return {"script": full_script}
 
+    return {"script": full_script}
+
+
+async def _analyze_chunk_doubao(client: AsyncOpenAI, chunk_text: str, chunk_index: int) -> List[Dict[str, Any]]:
+    """Analyze a single chunk using Doubao (via OpenAI SDK)."""
+    
+    chunk_prompt = f"Part {chunk_index + 1} of a story. {SYSTEM_PROMPT}"
+    
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.chat.completions.create(
+                model="doubao-seed-1-6-lite-251015",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": chunk_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": chunk_text
+                    }
+                ],
+                reasoning_effort="medium"
+            )
+            
+            content = response.choices[0].message.content
+            
+            # Post-processing: Convert <<<...>>> to valid JSON strings (quoted)
+            def replace_brackets(match):
+                text_content = match.group(1)
+                return json.dumps(text_content)
+            
+            fixed_content = re.sub(r'<<<(.*?)>{2,3}', replace_brackets, content, flags=re.DOTALL)
+            parsed = dirtyjson.loads(fixed_content)
+            
+            if "script" not in parsed or not isinstance(parsed["script"], list):
+                if attempt == max_retries:
+                    print(f"❌ [Doubao] Chunk {chunk_index} failed validation")
+                    return []
+                continue
+                
+            return parsed["script"]
+            
+        except Exception as e:
+            if attempt == max_retries:
+                print(f"❌ [Doubao] Chunk {chunk_index} error: {e}")
+                return []
+            await asyncio.sleep(1)
+
+    return []
+
+
+async def analyze_text_doubao(text: str, ark_api_key: str) -> Dict[str, Any]:
+    """
+    Analyze novel text using Doubao Lite model.
+    """
+    if not AsyncOpenAI:
+        raise ImportError("openai package is required for Doubao analysis")
+
+    client = AsyncOpenAI(
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        api_key=ark_api_key
+    )
+
+    # 1. Chunking
+    chunks = _chunk_text(text)
+    
+    # 2. Parallel Analysis
+    tasks = [
+        _analyze_chunk_doubao(client, chunk, i) 
+        for i, chunk in enumerate(chunks)
+    ]
+    
+    results = await asyncio.gather(*tasks)
+        
+    # 3. Merge Results
+    full_script = []
+    for chunk_script in results:
+        # Enforce default voice="待定" if missing
+        for segment in chunk_script:
+            if "voice" not in segment:
+                segment["voice"] = "待定"
+        full_script.extend(chunk_script)
+        
+    if not full_script:
+        raise ValueError("Failed to generate any script segments with Doubao")
+        
+    return {"script": full_script}

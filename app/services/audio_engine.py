@@ -148,34 +148,35 @@ VOICE_LABELS = {
     "zh-CN-YunxiNeural": "Yunxi (Narrator)",
     
     # Google (English)
-    "en-US-Neural2-A": "Male A (Neural2)",
-    "en-US-Neural2-C": "Female C (Neural2)",
-    "en-US-Neural2-D": "Male D (Neural2)",
-    "en-US-Neural2-E": "Female E (Neural2)",
-    "en-US-Neural2-F": "Female F (Neural2)",
-    "en-US-Neural2-G": "Female G (Neural2)",
-    "en-US-Neural2-H": "Female H (Neural2)",
-    "en-US-Neural2-I": "Male I (Neural2)",
-    "en-US-Neural2-J": "Male J (Neural2)",
-    "en-US-Wavenet-A": "Male A (Wavenet)",
-    "en-US-Wavenet-B": "Male B (Wavenet)",
-    "en-US-Wavenet-C": "Female C (Wavenet)",
-    "en-US-Wavenet-D": "Male D (Wavenet)",
-    "en-US-Wavenet-E": "Female E (Wavenet)",
-    "en-US-Wavenet-F": "Female F (Wavenet)",
+    "en-US-Neural2-A": "Steven (Classic)",
+    "en-US-Neural2-C": "Sarah (Bright)",
+    "en-US-Neural2-D": "Robert (Deep)",
+    "en-US-Neural2-E": "Emily (Soft)",
+    "en-US-Neural2-F": "Jennifer (Warm)",
+    "en-US-Neural2-G": "Female G (Neural2)", # Kept generic if no mapping decided
+    "en-US-Neural2-H": "Helen (Mature)",
+    "en-US-Neural2-I": "David (Strong)",
+    "en-US-Neural2-J": "Michael (Energetic)",
+    "en-US-Wavenet-A": "James (Standard)",
+    "en-US-Wavenet-B": "John (Formal)",
+    "en-US-Wavenet-C": "Mary (Sweet)",
+    "en-US-Wavenet-D": "William (Deep)",
+    "en-US-Wavenet-E": "Patricia (Soft)",
+    "en-US-Wavenet-F": "Linda (Warm)",
     "en-GB-Neural2-A": "Female A (UK Neural2)",
     "en-GB-Neural2-B": "Male B (UK Neural2)",
     "en-GB-Neural2-C": "Female C (UK Neural2)",
     "en-GB-Neural2-D": "Male D (UK Neural2)",
 
     # Google (Chinese)
-    "cmn-CN-Wavenet-A": "Female A (CN Wavenet)",
-    "cmn-CN-Wavenet-B": "Male B (CN Wavenet)",
-    "cmn-CN-Wavenet-C": "Male C (CN Wavenet)",
-    "cmn-CN-Wavenet-D": "Female D (CN Wavenet)",
+    "cmn-CN-Wavenet-A": "小燕 (甜美)", # Xiaoyan
+    "cmn-CN-Wavenet-B": "云扬 (播音)", # Yunyang
+    "cmn-CN-Wavenet-C": "云希 (故事)", # Yunxi (Story)
+    "cmn-CN-Wavenet-D": "晓晓 (亲切)", # Xiaoxiao
     "cmn-TW-Wavenet-A": "Female A (TW Wavenet)",
     "cmn-TW-Wavenet-B": "Male B (TW Wavenet)",
     "cmn-TW-Wavenet-C": "Male C (TW Wavenet)",
+
 
     # OpenAI
     "onyx": "Onyx (Deep Male)",
@@ -295,18 +296,29 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
                  
         else:
             # Default Logic
-            # 2. Determine provider based on Tier (Narrator Logic)
-            # VIP -> OpenAI, Free -> Azure (fallback logic simplified here)
-            narration_provider = "openai" if user_tier == "vip" else "azure"
+            # 2. Determine provider based on Tier (Narrator Logic) with Availability Check
             
-            # 3. Get Voice ID
             voice_id = None
-            if narration_provider == "openai":
-                 # Default assumption
+            
+            if user_tier == "vip":
+                # VIP Logic: Try OpenAI first
+                 narration_provider = "openai"
                  voice_id = VOICE_MAP["openai"]["male"] # Onyx
             else:
-                 # Azure
-                 voice_id = VOICE_MAP["azure"].get(lang_key, "en-US-BrianNeural")
+                # Free Logic: Try Azure first, fallback to Google
+                if tts_manager.providers["azure"].is_enabled:
+                    narration_provider = "azure"
+                    voice_id = VOICE_MAP["azure"].get(lang_key, "en-US-BrianNeural")
+                else:
+                    # Fallback to Google
+                    narration_provider = "google"
+                    if lang_key == "zh":
+                        # cmn-CN-Wavenet-C (Yunxi Story)
+                        voice_id = VOICE_MAP["google"]["zh"]["male"] 
+                    else:
+                        # Michael (Energetic)
+                         voice_id = "en-US-Neural2-J"
+
                          
         # Manual Override Check for Narrator could be here if supported, but simpler for now.
         
