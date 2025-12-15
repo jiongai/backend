@@ -65,7 +65,7 @@
       "gender": "male",
       "emotion": "fearful",
       "pacing": 1.0,
-      "voice": "待定"
+      "voice_id": "pending"
     }
 
   ],
@@ -91,7 +91,7 @@
 
 | 参数名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `script` | array | 是 | 结构化的脚本数组。**支持手动指定 Voice**: 若片段包含 `voice` 字段且值不是 "待定", 则强制使用该 Voice ID (如 "en-US-Neural2-J")。 |
+| `script` | array | 是 | 结构化的脚本数组。**手动指定 Voice (Manual Override)**: <br>如果脚本中的某个段落包含 `voice_id` 字段且值不是 "pending", 系统将**强制使用**该 Voice ID (例如 "en-US-Neural2-J") 进行合成，而忽略自动分配逻辑。<br>支持对话角色 (`dialogue`) 和旁白 (`narration`)。 |
 
 
 #### 响应
@@ -122,6 +122,7 @@
 #### 响应
 - **Content-Type**: `application/zip`
 - **内容**: 包含 `drama.mp3`, `drama.srt` 和 `roles.json` 的 ZIP 包。
+- **注意**：`script` 数组中的每个对象应包含 `type`, `text`, `character`, `emotion` 等字段，以及可选的 `voice_id` 字段。
 
 
 ---

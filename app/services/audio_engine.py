@@ -311,12 +311,14 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         lang_key = "zh" if is_chinese else "en"
         
         # Check for Manual Voice Override (Narrator)
-        manual_voice = first_narration.get("voice")
+        manual_voice = first_narration.get("voice_id") # Changed from 'voice'
         is_override = False
         
-        if manual_voice and manual_voice != "待定" and isinstance(manual_voice, str) and manual_voice.strip():
+        if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
              is_override = True
              voice_id = manual_voice.strip()
+
+
              
              # Resolve Provider from ID (Simplified heuristic)
              if voice_id in list(VOICE_MAP["openai"].values()):
@@ -379,12 +381,14 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         gender = segment.get("gender", "male")
         
         # Check for Manual Voice Override
-        manual_voice = segment.get("voice")
+        manual_voice = segment.get("voice_id") # Changed from 'voice'
         is_override = False
         
-        if manual_voice and manual_voice != "待定" and isinstance(manual_voice, str) and manual_voice.strip():
+        if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
              is_override = True
              voice_id = manual_voice.strip()
+
+
              
              # Resolve Provider from ID (Simplified heuristic)
              if voice_id in list(VOICE_MAP["openai"].values()):
@@ -571,13 +575,14 @@ class TTSManager:
 
         
         # Check for manual voice override (new feature)
-        # If 'voice' is present, not empty, and not "待定", use it directly.
-        manual_voice = segment.get("voice")
+        # If 'voice' is present, not        # Check for manual voice override (new feature)
+        manual_voice = segment.get("voice_id") # Changed from 'voice'
         is_manual_override = False
         
-        if manual_voice and manual_voice != "待定" and isinstance(manual_voice, str) and manual_voice.strip():
+        if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
              is_manual_override = True
              specific_voice_id = manual_voice.strip()
+
         
         # Detect language (needed for provider selection if not manual)
 
