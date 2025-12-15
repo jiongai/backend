@@ -246,12 +246,48 @@ def get_enriched_voice_map() -> Dict:
 def get_public_voice_groups() -> Dict:
     """
     Get the structured public voice groups (Basic/Advance).
+    Deduplicates voices that appear in both 'defaults' and 'pool'.
     """
     full_map = get_enriched_voice_map()
+    
+    # Deduplicate Google Listing
+    if "google" in full_map and "pool" in full_map["google"]:
+        g_defaults = full_map["google"]
+        g_pool = full_map["google"]["pool"]
+        
+        for lang in g_pool:
+            if lang in g_defaults: # e.g. "en", "zh"
+                # Check Male
+                def_male = g_defaults[lang].get("male")
+                if def_male and isinstance(def_male, dict) and "id" in def_male:
+                    target_id = def_male["id"]
+                    if "male" in g_pool[lang]:
+                        g_pool[lang]["male"] = [v for v in g_pool[lang]["male"] if v["id"] != target_id]
+                        
+                # Check Female
+                def_female = g_defaults[lang].get("female")
+                if def_female and isinstance(def_female, dict) and "id" in def_female:
+                    target_id = def_female["id"]
+                    if "female" in g_pool[lang]:
+                        g_pool[lang]["female"] = [v for v in g_pool[lang]["female"] if v["id"] != target_id]
+
+    # Deduplicate ElevenLabs Listing
+    if "elevenlabs" in full_map and "pool" in full_map["elevenlabs"]:
+        el_defaults = full_map["elevenlabs"]
+        el_pool = full_map["elevenlabs"]["pool"]
+        
+        for gender in ["male", "female"]:
+            def_voice = el_defaults.get(gender)
+            if def_voice and isinstance(def_voice, dict) and "id" in def_voice:
+                target_id = def_voice["id"]
+                if gender in el_pool:
+                     el_pool[gender] = [v for v in el_pool[gender] if v["id"] != target_id]
+
     return {
         "Basic": full_map.get("google"),
         "Advance": full_map.get("elevenlabs")
     }
+
 
 def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
     """
