@@ -65,7 +65,8 @@
       "gender": "male",
       "emotion": "fearful",
       "pacing": 1.0,
-      "voice_id": "pending"
+      "voice_id": "cmn-TW-Wavenet-B",
+      "provider": "google"
     }
 
   ],
@@ -99,7 +100,6 @@
 - **内容**: ZIP 包，解压后包含：
     1. `drama.mp3`: 音频文件
     2. `drama.srt`: 字幕文件
-    3. `roles.json`: 角色配音表 (包含角色名、Voice ID、Voice Name)
 
 - **Headers**:
     - `X-Segments-Count`: 处理的片段数量
@@ -121,7 +121,7 @@
 
 #### 响应
 - **Content-Type**: `application/zip`
-- **内容**: 包含 `drama.mp3`, `drama.srt` 和 `roles.json` 的 ZIP 包。
+- **内容**: 包含 `drama.mp3` 和 `drama.srt` 的 ZIP 包。
 - **注意**：`script` 数组中的每个对象应包含 `type`, `text`, `character`, `emotion` 等字段，以及可选的 `voice_id` 字段。
 
 
