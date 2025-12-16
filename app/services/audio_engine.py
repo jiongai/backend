@@ -617,14 +617,34 @@ class TTSManager:
         # 2. If missing or empty, calculate them (Legacy Path / Fallback)
         # Empty string means the frontend passed the script back without assigning a specific voice,
         # so we must calculate a deterministic voice on the fly.
-        if not provider_name or not specific_voice_id: # Handles None, "", and 0
-             import re
-             is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-             lang_key = "zh" if is_chinese else "en"
-             
-             seg_type = segment.get("type", "narration")
-             provider_name = self.select_provider(seg_type, text, user_tier, emotion)
-             specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
+        # 2. If missing or empty, calculate them (Legacy Path / Fallback)
+        # Empty string means the frontend passed the script back without assigning a specific voice,
+        # so we must calculate a deterministic voice on the fly.
+        if not provider_name or not specific_voice_id:
+             # Case 2a: Have voice_id but no provider (e.g. Manual Override / Review)
+             if specific_voice_id and not provider_name:
+                 # Infer provider from voice ID pattern
+                 if "Neural2" in specific_voice_id or "Wavenet" in specific_voice_id:
+                     provider_name = "google"
+                 elif "Neural" in specific_voice_id: # Azure usually ends in Neural
+                     provider_name = "azure"
+                 elif specific_voice_id in ["onyx", "alloy", "shimmer", "echo", "fable", "nova"]:
+                     provider_name = "openai"
+                 elif len(specific_voice_id) > 15: # ElevenLabs IDs are ~20 chars
+                     provider_name = "elevenlabs"
+                 else:
+                     # Fallback to default calculation if unknown
+                     pass
+
+             # Case 2b: Still missing provider or voice_id -> Calculate from scratch (Auto-Assignment)
+             if not provider_name or not specific_voice_id:
+                 import re
+                 is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+                 lang_key = "zh" if is_chinese else "en"
+                 
+                 seg_type = segment.get("type", "narration")
+                 provider_name = self.select_provider(seg_type, text, user_tier, emotion)
+                 specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
         
         # Determine emotion settings
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
