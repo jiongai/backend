@@ -10,6 +10,7 @@ from typing import Dict, Any, List
 import re
 import json
 import os
+from .audio_engine import tts_manager
 try:
     from openai import AsyncOpenAI
 except ImportError:
@@ -150,7 +151,7 @@ async def _analyze_chunk(client: httpx.AsyncClient, chunk_text: str, api_key: st
     return []
 
 
-async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
+async def analyze_text(text: str, api_key: str, user_tier: str = "free") -> Dict[str, Any]:
     """
     Analyze novel text converting it to audio drama script format.
     Handles long text by chunking.
@@ -180,8 +181,7 @@ async def analyze_text(text: str, api_key: str) -> Dict[str, Any]:
     if not full_script:
         raise ValueError("Failed to generate any script segments")
         
-    return {"script": full_script}
-
+    full_script = tts_manager.assign_voices_to_script(full_script, user_tier)
     return {"script": full_script}
 
 

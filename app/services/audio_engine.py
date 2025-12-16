@@ -564,58 +564,67 @@ class TTSManager:
         # Default fallback
         return "google"
 
+    def assign_voices_to_script(self, script: list, user_tier: str = "free") -> list:
+        """
+        Enrich the script by pre-calculating and assigning voices and providers.
+        This allows the frontend to see and edit the voice assignments.
+        """
+        for segment in script:
+            text = segment["text"]
+            character = segment.get("character", "Narrator")
+            seg_type = segment["type"]
+            emotion = segment.get("emotion", "neutral")
+            gender = segment.get("gender", "male")
+            
+            # Detect language (needed for voice selection)
+            import re
+            is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+            lang_key = "zh" if is_chinese else "en"
+            
+            # 1. Determine Provider
+            provider_name = self.select_provider(seg_type, text, user_tier, emotion)
+            
+            # 2. Determine Voice ID
+            specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
+            
+            # Fallback for Google/Azure if specific_voice_id is None
+            if not specific_voice_id:
+                if provider_name == "google":
+                    voice_dict = VOICE_MAP["google"][lang_key]
+                    specific_voice_id = voice_dict.get(gender, list(voice_dict.values())[0])
+                elif provider_name == "azure":
+                    specific_voice_id = VOICE_MAP["azure"][lang_key]
+                elif provider_name == "openai":
+                    specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+
+            # 3. Write to Segment
+            segment["provider"] = provider_name
+            segment["voice_id"] = specific_voice_id
+            
+        return script
+
     async def generate(self, segment: Dict, output_file: str, user_tier: str = "free", elevenlabs_key: str = None) -> None:
         text = segment["text"]
         character = segment.get("character", "Narrator")
-        seg_type = segment["type"]
         emotion = segment.get("emotion", "neutral")
         gender = segment.get("gender", "male")
         pacing = float(segment.get("pacing", 1.0))
         
-
+        # 1. Try to get pre-assigned provider/voice (WYSIWYG)
+        provider_name = segment.get("provider")
+        specific_voice_id = segment.get("voice_id")
         
-        # Check for manual voice override (new feature)
-        # If 'voice' is present, not        # Check for manual voice override (new feature)
-        manual_voice = segment.get("voice_id") # Changed from 'voice'
-        is_manual_override = False
-        
-        if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
-             is_manual_override = True
-             specific_voice_id = manual_voice.strip()
-
-        
-        # Detect language (needed for provider selection if not manual)
-
-        import re
-        is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-        lang_key = "zh" if is_chinese else "en"
-        
-        provider_name = self.select_provider(seg_type, text, user_tier, emotion)
-        
-        if is_manual_override:
-            # Try to resolve provider from the voice ID
-            # 1. Check OpenAI
-            if specific_voice_id in list(VOICE_MAP["openai"].values()):
-                provider_name = "openai"
-                
-            # 2. Check Azure
-            elif specific_voice_id in list(VOICE_MAP["azure"].values()) or specific_voice_id in ["en-US-BrianNeural", "zh-CN-YunxiNeural"]:
-                provider_name = "azure"
-                
-            # 3. Check Google
-            elif "Neural2" in specific_voice_id or "Wavenet" in specific_voice_id:
-                provider_name = "google"
-                
-            # 4. Fallback/Default assumption: It's ElevenLabs if it looks like an ID (20 chars)
-            elif len(specific_voice_id) > 15: # ElevenLabs IDs are usually ~20 chars
-                provider_name = "elevenlabs"
-
-        # Calculate consistent voice (ONLY if not manual)
-        if not is_manual_override:
+        # 2. If missing, calculate them (Legacy Path)
+        if not provider_name or not specific_voice_id:
+             import re
+             is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+             lang_key = "zh" if is_chinese else "en"
+             
+             seg_type = segment.get("type", "narration")
+             provider_name = self.select_provider(seg_type, text, user_tier, emotion)
              specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
-
         
-        # Determine emotion settings (Only for ElevenLabs currently)
+        # Determine emotion settings
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
         
         print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'}, Settings: {settings}, Speed: {pacing})")

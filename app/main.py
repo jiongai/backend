@@ -369,7 +369,8 @@ async def review_voice(
 @app.post("/analyze", response_model=dict)
 async def analyze_only(
     request: DramaRequest,
-    openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-API-Key")
+    openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-API-Key"),
+    user_tier: str = Header("free", alias="X-User-Tier")
 ):
     """
     Analyze text and return the structured script without generating audio.
@@ -386,7 +387,7 @@ async def analyze_only(
     
     try:
         # Analyze text
-        result = await analyze_text(request.text, openrouter_key)
+        result = await analyze_text(request.text, openrouter_key, user_tier=user_tier)
         
         # Add metadata
         if "script" in result:
