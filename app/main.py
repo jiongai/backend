@@ -317,7 +317,7 @@ async def review_voice(
     
     
     try:
-        print(f"   [DEBUG] /review params - Text: {request.text}, Voice: {request.voice_id}, User Tier: {user_tier}")
+        print(f"   [DEBUG] /review params - Text: {request.text}, Voice_id: {request.voice_id}, User Tier: {user_tier}")
         # Construct a temporary segment forcing the voice
         # Truncate text to first 30 chars for preview
         truncated_text = request.text[:30]

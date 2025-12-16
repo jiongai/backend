@@ -614,10 +614,10 @@ class TTSManager:
         provider_name = segment.get("provider")
         specific_voice_id = segment.get("voice_id")
         
-        # 2. If missing or "pending", calculate them (Legacy Path / Fallback)
-        # "pending" means the frontend passed the script back without assigning a specific voice,
+        # 2. If missing or empty, calculate them (Legacy Path / Fallback)
+        # Empty string means the frontend passed the script back without assigning a specific voice,
         # so we must calculate a deterministic voice on the fly.
-        if not provider_name or not specific_voice_id or specific_voice_id == "pending":
+        if not provider_name or not specific_voice_id: # Handles None, "", and 0
              import re
              is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
              lang_key = "zh" if is_chinese else "en"

@@ -28,7 +28,7 @@ Segment format:
     "gender": "male" | "female",
     "emotion": "neutral" | "happy" | "sad" | "angry" | "fearful" | "surprised" | "whispering" | "shouting",
     "pacing": 1.0, (float, 0.8=slow, 1.2=fast),
-    "voice_id": "pending" // Placeholder: AI sets this, backend will replace it with actual voice ID
+    "voice_id": "" // Placeholder: Leave empty, backend will fill this
 }
 
 
@@ -171,12 +171,12 @@ async def analyze_text(text: str, api_key: str, user_tier: str = "free") -> Dict
     # 3. Merge Results
     full_script = []
     for chunk_script in results:
-        # Enforce default voice_id="pending" if missing
-        # "pending" is a temporary placeholder indicating the voice has not been assigned yet.
+        # Enforce default voice_id="" if missing
+        # Empty string indicates the voice has not been assigned yet.
         # It will be replaced by a concrete ID (e.g. "cmn-TW-Wavenet-B") in assign_voices_to_script.
         for segment in chunk_script:
             if "voice_id" not in segment:
-                segment["voice_id"] = "pending"
+                segment["voice_id"] = ""
         full_script.extend(chunk_script)
 
         
@@ -263,10 +263,10 @@ async def analyze_text_doubao(text: str, ark_api_key: str, user_tier: str = "fre
     # 3. Merge Results
     full_script = []
     for chunk_script in results:
-        # Enforce default voice_id="pending" if missing
+        # Enforce default voice_id="" if missing (Doubao logic)
         for segment in chunk_script:
             if "voice_id" not in segment:
-                segment["voice_id"] = "pending"
+                segment["voice_id"] = ""
         full_script.extend(chunk_script)
         
     if not full_script:
