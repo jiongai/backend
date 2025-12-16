@@ -191,6 +191,9 @@
 | :--- | :--- | :--- | :--- | :--- |
 | `text` | string | 是 | Max 100 字符 | 试听文本内容。**注意：系统实际只会合成前 30 个字符。** |
 | `voice_id` | string | 是 | - | 目标 Voice ID (如 "en-US-Neural2-J") |
+| `provider` | string | 是 | - | TTS 提供商 (google, azure, openai, elevenlabs) |
+| `pacing` | float | 否 | 0.25-4.0 | 语速 (默认 1.0) |
+| `emotion` | string | 否 | - | 情感样式 (默认 "neutral") |
 
 
 #### 响应
