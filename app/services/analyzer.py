@@ -235,7 +235,7 @@ async def _analyze_chunk_doubao(client: AsyncOpenAI, chunk_text: str, chunk_inde
     return []
 
 
-async def analyze_text_doubao(text: str, ark_api_key: str) -> Dict[str, Any]:
+async def analyze_text_doubao(text: str, ark_api_key: str, user_tier: str = "free") -> Dict[str, Any]:
     """
     Analyze novel text using Doubao Lite model.
     """
@@ -270,4 +270,5 @@ async def analyze_text_doubao(text: str, ark_api_key: str) -> Dict[str, Any]:
     if not full_script:
         raise ValueError("Failed to generate any script segments with Doubao")
         
+    full_script = tts_manager.assign_voices_to_script(full_script, user_tier)
     return {"script": full_script}

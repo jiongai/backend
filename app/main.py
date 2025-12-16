@@ -409,7 +409,8 @@ async def analyze_only(
 @app.post("/analyze_lite", response_model=dict)
 async def analyze_lite(
     request: DramaRequest,
-    ark_api_key: Optional[str] = Header(None, alias="X-Ark-API-Key")
+    ark_api_key: Optional[str] = Header(None, alias="X-Ark-API-Key"),
+    user_tier: str = Header("free", alias="X-User-Tier")
 ):
     """
     Analyze text using Doubao (Volcengine Ark).
@@ -426,7 +427,7 @@ async def analyze_lite(
     
     try:
         # Analyze text using Doubao
-        result = await analyze_text_doubao(request.text, ark_key)
+        result = await analyze_text_doubao(request.text, ark_key, user_tier=user_tier)
         
         # Add metadata (Same logic as standard analyze)
         if "script" in result:
