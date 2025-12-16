@@ -315,7 +315,9 @@ async def review_voice(
     temp_dir = tempfile.mkdtemp(prefix="dramaflow_review_")
     output_file = Path(temp_dir) / "preview.mp3"
     
+    
     try:
+        print(f"   [DEBUG] /review params - Text: {request.text}, Voice: {request.voice_id}, User Tier: {user_tier}")
         # Construct a temporary segment forcing the voice
         # Truncate text to first 30 chars for preview
         truncated_text = request.text[:30]
@@ -324,7 +326,7 @@ async def review_voice(
             "type": "dialogue", # Broadest compatibility
             "text": truncated_text,
             "character": "Preview",
-            "voice": request.voice_id, # Manually override
+            "voice_id": request.voice_id, # Manually override
             "pacing": 1.0,
             "emotion": "neutral" 
         }

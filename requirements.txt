@@ -8,6 +8,7 @@ openai>=1.0.0
 azure-cognitiveservices-speech
 google-cloud-texttospeech
 pydub
+audioop-lts
 dirtyjson
 
 ffmpeg-python
