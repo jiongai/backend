@@ -128,7 +128,6 @@ class ReviewRequest(BaseModel):
     """Request model for voice preview/review."""
     text: str = Field(..., description="Text to speak", max_length=100)
     voice_id: str = Field(..., description="Voice ID to test")
-    provider: str = Field(..., description="TTS Provider (google, azure, openai, elevenlabs)")
     pacing: Optional[float] = Field(1.0, description="Speaking speed (0.25-4.0)")
     emotion: Optional[str] = Field("neutral", description="Emotion style")
 
@@ -320,7 +319,7 @@ async def review_voice(
     
     
     try:
-        print(f"   [DEBUG] /review params - Text: {request.text}, Voice: {request.voice_id}, Provider: {request.provider}, Pacing: {request.pacing}, Emotion: {request.emotion}")
+        print(f"   [DEBUG] /review params - Text: {request.text}, Voice: {request.voice_id}, Pacing: {request.pacing}, Emotion: {request.emotion}")
         # Construct a temporary segment forcing the voice
         # Truncate text to first 30 chars for preview
         truncated_text = request.text[:30]
@@ -330,9 +329,9 @@ async def review_voice(
             "text": truncated_text,
             "character": "Preview",
             "voice_id": request.voice_id,
-            "provider": request.provider, # Explicit provider
-            "pacing": request.pacing,     # Explicit pacing
-            "emotion": request.emotion    # Explicit emotion
+            # "provider": request.provider, # Removed: Parsing from voice_id in audio_engine
+            "pacing": request.pacing,    
+            "emotion": request.emotion   
         }
 
         

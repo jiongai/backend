@@ -220,28 +220,32 @@ VOICE_LABELS = {
 def get_enriched_voice_map() -> Dict:
     """
     Return a copy of VOICE_MAP where every voice ID is 
-    replaced with {"id": "...", "name": "..."}.
+    replaced with {"id": "...", "name": "...", "provider": "..."}.
     """
     import copy
     
-    def enrich_node(node):
+    def enrich_node(node, provider_name):
         if isinstance(node, str):
             # It's a voice ID (leaf)
             return {
-                "id": node,
+                "id": f"{provider_name}:{node}", # Keep namespacing!
                 "name": VOICE_LABELS.get(node, node) # Fallback to ID if no name found
+                # "provider": provider_name # Removed as per request
             }
         elif isinstance(node, dict):
-            return {k: enrich_node(v) for k, v in node.items()}
+            return {k: enrich_node(v, provider_name) for k, v in node.items()}
         elif isinstance(node, list):
-            return [enrich_node(item) for item in node]
+            return [enrich_node(item, provider_name) for item in node]
         return node
 
     # Deep copy to avoid mutating the original CONFIGURATION
     raw_map = copy.deepcopy(VOICE_MAP)
-    # Deep copy to avoid mutating the original CONFIGURATION
-    raw_map = copy.deepcopy(VOICE_MAP)
-    return enrich_node(raw_map)
+    
+    enriched_map = {}
+    for provider, data in raw_map.items():
+        enriched_map[provider] = enrich_node(data, provider)
+        
+    return enriched_map
 
 def get_public_voice_groups() -> Dict:
     """
@@ -449,7 +453,7 @@ class TTSManager:
         Get a consistent voice ID/name for a character based on their name hash.
         """
         if provider == "openai":
-                return VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+            return f"openai:{VOICE_MAP['openai']['male']}" if gender == "male" else f"openai:{VOICE_MAP['openai']['female']}"
         
         # Support both Google and ElevenLabs pools
         target_pool = None
@@ -472,7 +476,8 @@ class TTSManager:
             if provider == "azure":
                  # Azure mapping is direct in VOICE_MAP['azure'][lang]
                  # Not pool-based
-                 return VOICE_MAP["azure"].get(lang, "en-US-BrianNeural")
+                 voice_id = VOICE_MAP["azure"].get(lang, "en-US-BrianNeural")
+                 return f"azure:{voice_id}"
             
             # Generic fallback
             return None
@@ -485,7 +490,7 @@ class TTSManager:
         voice_index = hash_int % len(target_pool)
         selected_voice = target_pool[voice_index]
         print(f"   [Voice Assignment] '{character}' ({gender}) -> {provider.upper()}: {selected_voice} (Index: {voice_index})")
-        return selected_voice
+        return f"{provider}:{selected_voice}"
         
     def _get_monthly_usage(self) -> int:
         """Read current month's Azure usage from file."""
@@ -591,14 +596,16 @@ class TTSManager:
             if not specific_voice_id:
                 if provider_name == "google":
                     voice_dict = VOICE_MAP["google"][lang_key]
-                    specific_voice_id = voice_dict.get(gender, list(voice_dict.values())[0])
+                    raw_id = voice_dict.get(gender, list(voice_dict.values())[0])
+                    specific_voice_id = f"google:{raw_id}"
                 elif provider_name == "azure":
-                    specific_voice_id = VOICE_MAP["azure"][lang_key]
+                    raw_id = VOICE_MAP["azure"][lang_key]
+                    specific_voice_id = f"azure:{raw_id}"
                 elif provider_name == "openai":
                     specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
 
             # 3. Write to Segment
-            segment["provider"] = provider_name
+            # segment["provider"] = provider_name # Replaced by namespaced ID
             segment["voice_id"] = specific_voice_id
             
         return script
@@ -613,6 +620,15 @@ class TTSManager:
         # 1. Try to get pre-assigned provider/voice (WYSIWYG)
         provider_name = segment.get("provider")
         specific_voice_id = segment.get("voice_id")
+        
+        # New: Parse namespaced ID (e.g. google:en-US-Neural2-A)
+        # This takes precedence over separate fields
+        if specific_voice_id and ":" in specific_voice_id and not provider_name:
+            p_candidate, v_candidate = specific_voice_id.split(":", 1)
+            # Basic validation to ensure it looks like a provider
+            if p_candidate in ["google", "azure", "openai", "elevenlabs"]:
+                provider_name = p_candidate
+                specific_voice_id = v_candidate
         
         # 2. If missing or empty, calculate them (Legacy Path / Fallback)
         # Empty string means the frontend passed the script back without assigning a specific voice,
