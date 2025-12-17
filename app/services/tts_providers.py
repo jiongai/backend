@@ -22,12 +22,28 @@ try:
 except ImportError:
     AsyncOpenAI = None
 
+try:
+    from elevenlabs.client import ElevenLabs
+    from elevenlabs import VoiceSettings
+except ImportError:
+    ElevenLabs = None
+    VoiceSettings = None
+
 class TTSProvider(ABC):
     """Abstract base class for TTS providers."""
     
     @abstractmethod
-    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
-        """Generate audio from text."""
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0, **kwargs) -> None:
+        """
+        Generate audio from text.
+        
+        Args:
+            text: Text to synthesize
+            output_file: Path to save the audio file
+            voice: Voice ID or name
+            speed: Playback speed (default 1.0)
+            **kwargs: Provider-specific arguments (e.g. settings, api_key)
+        """
         pass
     
     @property
@@ -35,6 +51,11 @@ class TTSProvider(ABC):
     def name(self) -> str:
         """Provider name."""
         pass
+    
+    @property
+    def is_enabled(self) -> bool:
+        """Check if provider is configured and available."""
+        return False
 
 
 class AzureTTSProvider(TTSProvider):
@@ -53,7 +74,7 @@ class AzureTTSProvider(TTSProvider):
     def is_enabled(self) -> bool:
         return self._enabled
         
-    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0, **kwargs) -> None:
         if not self._enabled:
             raise Exception("Azure TTS is not configured or dependencies missing")
             
@@ -110,7 +131,7 @@ class GoogleTTSProvider(TTSProvider):
                 self._client = texttospeech.TextToSpeechClient()
         return self._client
         
-    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0, **kwargs) -> None:
         if not self._enabled:
             raise Exception("Google TTS is not configured or dependencies missing")
             
@@ -168,7 +189,7 @@ class OpenAITTSProvider(TTSProvider):
             self._client = AsyncOpenAI(api_key=self.api_key)
         return self._client
         
-    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0) -> None:
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0, **kwargs) -> None:
         if not self._enabled:
             raise Exception("OpenAI TTS is not configured or dependencies missing")
             
@@ -188,3 +209,72 @@ class OpenAITTSProvider(TTSProvider):
         )
         
         response.stream_to_file(output_file)
+
+
+class ElevenLabsTTSProvider(TTSProvider):
+    """ElevenLabs TTS Provider."""
+    
+    def __init__(self):
+        # API key is often passed per-request for billing attribution, 
+        # but we check if env var exists for enablement status.
+        self.default_key = os.getenv("ELEVENLABS_API_KEY")
+        self._enabled = bool(ElevenLabs) # Enable if package installed
+        
+    @property
+    def name(self) -> str:
+        return "ElevenLabs"
+    
+    @property
+    def is_enabled(self) -> bool:
+        return self._enabled
+        
+    async def generate(self, text: str, output_file: str, voice: str, speed: float = 1.0, **kwargs) -> None:
+        if not self._enabled:
+            raise Exception("ElevenLabs library not installed")
+            
+        api_key = kwargs.get("api_key") or self.default_key
+        if not api_key:
+            raise ValueError("ElevenLabs API key is required")
+            
+        settings_dict = kwargs.get("settings")
+        max_retries = kwargs.get("max_retries", 3)
+        
+        client = ElevenLabs(api_key=api_key)
+        
+        # Prepare settings
+        v_settings = None
+        if settings_dict:
+            v_settings = VoiceSettings(
+                stability=settings_dict.get("stability", 0.5),
+                similarity_boost=settings_dict.get("similarity_boost", 0.75),
+                style=settings_dict.get("style", 0.0),
+                use_speaker_boost=True
+            )
+            
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    print(f"   [ElevenLabs] Retry attempt {attempt+1}/{max_retries}...")
+                    
+                # Note: ElevenLabs Python SDK generate returns generator or bytes.
+                # The 'convert' method is correct for V3 SDK.
+                audio_generator = client.text_to_speech.convert(
+                    voice_id=voice,
+                    text=text,
+                    model_id="eleven_turbo_v2_5",
+                    voice_settings=v_settings
+                )
+                
+                # Consume generator and write to file
+                with open(output_file, "wb") as f:
+                    for chunk in audio_generator:
+                        f.write(chunk)
+                        
+                return # Success
+                
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise Exception(f"ElevenLabs generation failed after {max_retries} attempts: {str(e)}")
+                # Exponential backoff? 
+                # For now just simple retry as per original logic.
+                await asyncio.sleep(1)

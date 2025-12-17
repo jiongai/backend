@@ -15,10 +15,9 @@ from .tts_providers import (
     AzureTTSProvider, 
     GoogleTTSProvider, 
     OpenAITTSProvider,
+    ElevenLabsTTSProvider,
     TTSProvider
 )
-from elevenlabs.client import ElevenLabs
-from elevenlabs import VoiceSettings
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION
@@ -445,7 +444,8 @@ class TTSManager:
         self.providers = {
             "azure": AzureTTSProvider(),
             "google": GoogleTTSProvider(),
-            "openai": OpenAITTSProvider()
+            "openai": OpenAITTSProvider(),
+            "elevenlabs": ElevenLabsTTSProvider()
         }
     
     def _get_consistent_voice(self, character: str, gender: str, provider: str, lang: str = "en") -> str:
@@ -694,15 +694,12 @@ class TTSManager:
             await self.providers["openai"].generate(text, output_file, specific_voice_id, speed=pacing)
             
         elif provider_name == "elevenlabs":
-            if not elevenlabs_key:
-                raise ValueError("ElevenLabs API key required for ElevenLabs generation")
-            await _generate_with_elevenlabs(
-                text, 
-                gender, 
-                output_file, 
-                elevenlabs_key, 
-                voice_id_override=specific_voice_id,
-                settings_dict=settings
+            await self.providers["elevenlabs"].generate(
+                text=text,
+                output_file=output_file,
+                voice=specific_voice_id,
+                api_key=elevenlabs_key,
+                settings=settings
             )
             
         else:
@@ -753,71 +750,6 @@ async def generate_segment_audio(
     return str(output_file)
 
 
-async def _generate_with_elevenlabs(
-    text: str,
-    gender: str,
-    output_file: str,
-    api_key: str,
-    max_retries: int = 3,
-    voice_id_override: str = None,
-    settings_dict: dict = None
-) -> None:
-    """
-    Generate audio using ElevenLabs (paid) with retry mechanism.
-    (Preserved from previous version)
-    """
-    client = ElevenLabs(api_key=api_key)
-    
-    if voice_id_override:
-        voice_name = voice_id_override
-    else:
-        # Fallback to defaults if no override
-        voice_name = VOICE_MAP["elevenlabs"].get(gender.lower(), VOICE_MAP["elevenlabs"]["male"])
-    
-    loop = asyncio.get_event_loop()
-    
-    for attempt in range(max_retries):
-        try:
-            print(f"   [ElevenLabs] Starting attempt {attempt+1}/{max_retries}...")
-            
-            def _call_elevenlabs():
-                # Prepare settings if provided
-                v_settings = None
-                if settings_dict:
-                    v_settings = VoiceSettings(
-                        stability=settings_dict.get("stability", 0.5),
-                        similarity_boost=settings_dict.get("similarity_boost", 0.75),
-                        style=settings_dict.get("style", 0.0),
-                        use_speaker_boost=True
-                    )
-
-                return client.text_to_speech.convert(
-                    voice_id=voice_name,
-                    text=text,
-                    model_id="eleven_turbo_v2_5",
-                    voice_settings=v_settings
-                )
-
-            # 60s timeout
-            audio_generator = await asyncio.wait_for(
-                 loop.run_in_executor(None, _call_elevenlabs),
-                 timeout=60.0
-            )
-            
-            await loop.run_in_executor(None, lambda: _save_audio_bytes(audio_generator, output_file))
-            return
-            
-        except Exception as e:
-            print(f"   [ElevenLabs] ⚠️ Failed: {e}")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 * (attempt + 1))
-                continue
-            raise
-
-def _save_audio_bytes(audio_generator, output_file: str) -> None:
-    with open(output_file, "wb") as f:
-        for chunk in audio_generator:
-            f.write(chunk)
 
 
 async def generate_script_audio(
