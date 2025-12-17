@@ -123,6 +123,8 @@ class DramaResponse(BaseModel):
     message: str
     segments_count: int
     audio_duration_ms: Optional[int] = None
+    audio_url: Optional[str] = None
+    srt_url: Optional[str] = None
 
 class ReviewRequest(BaseModel):
     """Request model for voice preview/review."""
@@ -204,7 +206,8 @@ async def synthesize_audio_drama(
         print(f"Synthesizing from provided script ({len(request.script)} segments)...")
 
         
-        zip_path = await synthesize_drama(
+        # Result is now a dict with URLs
+        result = await synthesize_drama(
             script=request.script,
             temp_dir=temp_dir,
             openrouter_key=openrouter_key,
@@ -215,14 +218,11 @@ async def synthesize_audio_drama(
         # Schedule cleanup
         background_tasks.add_task(cleanup_temp_directory, temp_dir)
         
-        return FileResponse(
-            path=zip_path,
-            media_type="application/zip",
-            filename="drama_package.zip",
-            headers={
-                "X-Segments-Count": str(len(request.script)),
-                "X-Package-Contents": "drama.mp3,drama.srt"
-            }
+        return DramaResponse(
+            message="Synthesis successful",
+            segments_count=len(request.script),
+            audio_url=result["audio_url"],
+            srt_url=result["srt_url"]
         )
         
     except Exception as e:
@@ -269,7 +269,8 @@ async def generate_audio_drama(
         temp_dir = tempfile.mkdtemp(prefix="dramaflow_gen_")
         
         try:
-            zip_path = await synthesize_drama(
+            # Result is now a dict with URLs
+            result = await synthesize_drama(
                 script=script,
                 temp_dir=temp_dir,
                 openrouter_key=openrouter_key,
@@ -279,14 +280,11 @@ async def generate_audio_drama(
             
             background_tasks.add_task(cleanup_temp_directory, temp_dir)
             
-            return FileResponse(
-                path=zip_path,
-                media_type="application/zip",
-                filename="drama_package.zip",
-                headers={
-                    "X-Segments-Count": str(len(script)),
-                    "X-Package-Contents": "drama.mp3,drama.srt"
-                }
+            return DramaResponse(
+                message="Generation successful",
+                segments_count=len(script),
+                audio_url=result["audio_url"],
+                srt_url=result["srt_url"]
             )
         except Exception as e:
             cleanup_temp_directory(temp_dir)

@@ -9,7 +9,9 @@ import json
 
 from .audio_engine import generate_segment_audio, generate_cast_metadata
 
+from uuid import uuid4
 from .post_production import merge_audio_and_generate_srt
+from .storage import r2_storage
 
 async def synthesize_drama(
     script: List[Dict],
@@ -113,12 +115,74 @@ async def synthesize_drama(
     except Exception as e:
         raise Exception(f"Post-production failed: {str(e)}")
         
-    # Step 4: Zip Package
-    zip_path = os.path.join(temp_dir, "drama_package.zip")
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        zipf.write(final_audio_path, arcname="drama.mp3")
-        zipf.write(final_srt_path, arcname="drama.srt")
-
+    # Step 4: Upload to Cloudflare R2
+    print("   [Synthesizer] Uploading artifacts to R2...")
     
-    print(f"   [Synthesizer] Created package: {zip_path}")
-    return zip_path
+    # Generate IDs
+    # In a real app, project_id might come from the request. 
+    # For now, we put everything in a 'demos' folder or similar.
+    project_id = "demos"
+    chapter_id = str(uuid4())
+    
+    try:
+        # Upload Audio
+        audio_key = r2_storage.upload_file(
+            file_path=final_audio_path,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            content_type="audio/mpeg"
+        )
+        
+        # Upload SRT
+        srt_key = r2_storage.upload_file(
+            file_path=final_srt_path,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            content_type="text/plain" # or application/x-subrip
+        )
+        
+        # Construct Public URLs
+        # Assuming the bucket is public or has a custom domain.
+        # R2 public buckets usually look like: https://pub-<hash>.r2.dev/<key>
+        # OR user must provide a public domain base.
+        # Let's assume we pull a public domain env var or fall back to constructing it.
+        # But for now, returning the Key might be safer if the frontend constructs the URL, 
+        # or we return a presigned URL?
+        # User request said: "interface directly return 2 file's url".
+        # Let's assume we use a configured public domain.
+        
+        public_domain = os.getenv("R2_PUBLIC_DOMAIN")
+        if not public_domain:
+            # Fallback to just the key if domain not set, or warn
+            print("⚠️ R2_PUBLIC_DOMAIN not set. Returning keys instead of full URLs.")
+            audio_url = audio_key
+            srt_url = srt_key
+        else:
+            # Ensure domain doesn't have trailing slash
+            public_domain = public_domain.rstrip("/")
+            audio_url = f"{public_domain}/{audio_key}"
+            srt_url = f"{public_domain}/{srt_key}"
+            
+        print(f"   [Synthesizer] Upload Complete.")
+        print(f"   Audio: {audio_url}")
+        print(f"   SRT: {srt_url}")
+        
+        # Remove temp files immediately (as requested)
+        # We are inside a temp_dir managed by the caller (synthesize_drama's temp_dir arg),
+        # but cleanup is often done by the caller (BackgroundTasks).
+        # However, user said "upload complete delete temp files".
+        # The temp_dir is passed in. If we delete contents here, the caller's cleanup might fail or be redundant.
+        # Safe strategy: We can delete the specific files we created.
+        if os.path.exists(final_audio_path):
+            os.remove(final_audio_path)
+        if os.path.exists(final_srt_path):
+            os.remove(final_srt_path)
+            
+        return {
+            "audio_url": audio_url,
+            "srt_url": srt_url
+        }
+
+    except Exception as e:
+        raise Exception(f"Upload failed: {str(e)}")
+

@@ -10,5 +10,6 @@ google-cloud-texttospeech
 pydub
 audioop-lts
 dirtyjson
+boto3
 
 ffmpeg-python

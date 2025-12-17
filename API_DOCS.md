@@ -96,10 +96,17 @@
 
 
 #### 响应
-- **Content-Type**: `application/zip`
-- **内容**: ZIP 包，解压后包含：
-    1. `drama.mp3`: 音频文件
-    2. `drama.srt`: 字幕文件
+- **Content-Type**: `application/json`
+- **内容**: 返回音频和字幕的下载链接。
+
+```json
+{
+  "message": "Synthesis successful",
+  "segments_count": 5,
+  "audio_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.mp3",
+  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt"
+}
+```
 
 - **Headers**:
     - `X-Segments-Count`: 处理的片段数量
@@ -120,8 +127,17 @@
 | `text` | string | 是 | 10-10000 字符 | 小说文本内容 |
 
 #### 响应
-- **Content-Type**: `application/zip`
-- **内容**: 包含 `drama.mp3` 和 `drama.srt` 的 ZIP 包。
+- **Content-Type**: `application/json`
+- **内容**: 返回音频和字幕的下载链接。
+
+```json
+{
+  "message": "Generation successful",
+  "segments_count": 5,
+  "audio_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.mp3",
+  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt"
+}
+```
 - **注意**：`script` 数组中的每个对象应包含 `type`, `text`, `character`, `emotion` 等字段，以及可选的 `voice_id` 字段。
 
 
