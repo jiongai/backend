@@ -88,7 +88,7 @@ def apply_pacing(audio: AudioSegment, pacing: float) -> AudioSegment:
     return adjusted_audio.set_frame_rate(audio.frame_rate)
 
 
-def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[str, str]:
+def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[str, str, List[Dict]]:
     """
     Merge all audio segments into a single file and generate SRT subtitles.
     
@@ -97,7 +97,7 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         temp_dir: Directory to save output files
         
     Returns:
-        Tuple[str, str]: Paths to (final_audio.mp3, final_subtitles.srt)
+        Tuple[str, str, List[Dict]]: Paths to (final_audio.mp3, final_subtitles.srt) and the timeline data
         
     Raises:
         ValueError: If segments are invalid or audio files are missing
@@ -110,9 +110,10 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
     output_path = Path(temp_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Initialize empty audio track and subtitle list
+    # Initialize empty audio track, subtitle list, and timeline data
     final_audio = AudioSegment.empty()
     srt_entries = []
+    timeline_data = []
     
     # Silence gap between segments (300ms)
     silence_gap = AudioSegment.silent(duration=300)
@@ -139,14 +140,9 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         # Load the audio segment
         try:
             print(f"🔍 Loading audio file: {audio_file_path}")
-            print(f"🔍 AudioSegment.converter: {AudioSegment.converter}")
-            print(f"🔍 AudioSegment.ffmpeg: {AudioSegment.ffmpeg}")
             audio_segment = AudioSegment.from_file(audio_file_path)
-            print(f"✅ Loaded audio file: duration={len(audio_segment)}ms")
         except Exception as e:
             print(f"❌ Failed to load audio file: {e}")
-            import traceback
-            print(f"❌ Traceback: {traceback.format_exc()}")
             raise Exception(f"Failed to load audio file {audio_file_path}: {str(e)}")
         
         # Apply pacing adjustment if specified
@@ -154,7 +150,6 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
             try:
                 audio_segment = apply_pacing(audio_segment, pacing)
             except Exception as e:
-                # If pacing fails, log warning and continue with original audio
                 print(f"Warning: Failed to apply pacing {pacing} to segment {idx}: {e}")
         
         # Add silence gap before this segment (except for the first segment)
@@ -181,23 +176,18 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         
         srt_entry = generate_srt_entry(idx, start_time_ms, end_time_ms, subtitle_text)
         srt_entries.append(srt_entry)
+
+        # Collect timeline data (requested: index, start, end only)
+        timeline_data.append({
+            "index": idx,
+            "start": start_time_ms,
+            "end": end_time_ms
+        })
     
     # Export final audio
     final_audio_path = output_path / "final.mp3"
     try:
         print(f"🔍 Exporting final audio to: {final_audio_path}")
-        print(f"🔍 Total duration: {len(final_audio)}ms")
-        print(f"🔍 AudioSegment.converter: {AudioSegment.converter}")
-        
-        # Test if ffmpeg is executable
-        import subprocess
-        try:
-            result = subprocess.run([AudioSegment.converter, '-version'], 
-                                  capture_output=True, timeout=5)
-            print(f"✅ ffmpeg test: {result.returncode}, output: {result.stdout[:100]}")
-        except Exception as ffmpeg_test_error:
-            print(f"⚠️  ffmpeg test failed: {ffmpeg_test_error}")
-        
         final_audio.export(
             final_audio_path,
             format="mp3",
@@ -211,8 +201,6 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         print(f"✅ Exported final audio successfully")
     except Exception as e:
         print(f"❌ Failed to export final audio: {e}")
-        import traceback
-        print(f"❌ Traceback: {traceback.format_exc()}")
         raise Exception(f"Failed to export final audio: {str(e)}")
     
     # Export SRT subtitles
@@ -225,7 +213,7 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
     except Exception as e:
         raise Exception(f"Failed to export SRT file: {str(e)}")
     
-    return str(final_audio_path), str(final_srt_path)
+    return str(final_audio_path), str(final_srt_path), timeline_data
 
 
 def get_audio_duration(audio_file_path: str) -> int:

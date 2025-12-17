@@ -108,7 +108,7 @@ async def synthesize_drama(
     # Step 3: Merge and SRT
     print("   [Synthesizer] Merging audio and generating subtitles...")
     try:
-        final_audio_path, final_srt_path = merge_audio_and_generate_srt(
+        final_audio_path, final_srt_path, timeline_data = merge_audio_and_generate_srt(
             segments=script,
             temp_dir=temp_dir
         )
@@ -138,7 +138,7 @@ async def synthesize_drama(
             file_path=final_srt_path,
             project_id=project_id,
             chapter_id=chapter_id,
-            content_type="text/plain" # or application/x-subrip
+            content_type="application/x-subrip" # Standard for SRT
         )
         
         # Construct Public URLs
@@ -180,7 +180,8 @@ async def synthesize_drama(
             
         return {
             "audio_url": audio_url,
-            "srt_url": srt_url
+            "srt_url": srt_url,
+            "timeline": timeline_data
         }
 
     except Exception as e:

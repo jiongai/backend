@@ -104,7 +104,11 @@
   "message": "Synthesis successful",
   "segments_count": 5,
   "audio_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.mp3",
-  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt"
+  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt",
+  "timeline": [
+    { "index": 1, "start": 0, "end": 5000 },
+    { "index": 2, "start": 5000, "end": 12000 }
+  ]
 }
 ```
 
@@ -135,7 +139,11 @@
   "message": "Generation successful",
   "segments_count": 5,
   "audio_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.mp3",
-  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt"
+  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt",
+  "timeline": [
+    { "index": 1, "start": 0, "end": 5000 },
+    { "index": 2, "start": 5000, "end": 12000 }
+  ]
 }
 ```
 - **注意**：`script` 数组中的每个对象应包含 `type`, `text`, `character`, `emotion` 等字段，以及可选的 `voice_id` 字段。

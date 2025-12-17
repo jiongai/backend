@@ -11,7 +11,7 @@ import zipfile
 import json
 from pathlib import Path
 
-from typing import Optional
+from typing import List, Dict, Optional, Any
 
 # ========================================
 # Configure ffmpeg for Serverless
@@ -47,7 +47,7 @@ else:
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, field_validator, Field
 from dotenv import load_dotenv
 
 # Load environment variables FIRST
@@ -105,19 +105,8 @@ class SynthesizeRequest(BaseModel):
         description="Structured script segments to synthesize"
     )
 
-class DramaRequest(BaseModel):
-    """Request model for audio drama generation."""
-    text: str = Field(
-        ...,
-        description="Novel text to convert into audio drama",
-        min_length=10,
-        max_length=10000
-    )
 
-class DramaResponse(BaseModel):
-    """Response model for audio drama generation."""
-    message: str
-    segments_count: int
+
 class DramaResponse(BaseModel):
     """Response model for audio drama generation."""
     message: str
@@ -125,6 +114,7 @@ class DramaResponse(BaseModel):
     audio_duration_ms: Optional[int] = None
     audio_url: Optional[str] = None
     srt_url: Optional[str] = None
+    timeline: Optional[List[Dict[str, Any]]] = None
 
 class ReviewRequest(BaseModel):
     """Request model for voice preview/review."""
@@ -222,7 +212,8 @@ async def synthesize_audio_drama(
             message="Synthesis successful",
             segments_count=len(request.script),
             audio_url=result["audio_url"],
-            srt_url=result["srt_url"]
+            srt_url=result["srt_url"],
+            timeline=result.get("timeline")
         )
         
     except Exception as e:
@@ -284,7 +275,8 @@ async def generate_audio_drama(
                 message="Generation successful",
                 segments_count=len(script),
                 audio_url=result["audio_url"],
-                srt_url=result["srt_url"]
+                srt_url=result["srt_url"],
+                timeline=result.get("timeline")
             )
         except Exception as e:
             cleanup_temp_directory(temp_dir)
