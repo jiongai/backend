@@ -97,6 +97,10 @@ class DramaRequest(BaseModel):
         min_length=10,
         max_length=10000
     )
+    limit: Optional[int] = Field(
+        None, 
+        description="Number of segments to generate. 0 = analyze only. None = all."
+    )
 
 class SynthesizeRequest(BaseModel):
     """Request model for synthesis from existing script."""
@@ -255,7 +259,22 @@ async def generate_audio_drama(
         if not script:
              raise HTTPException(status_code=500, detail="No script generated")
              
-        # Step 2: Synthesize (calling the service directly, not the endpoint)
+        # Step 2: Handle Limit Logic
+        if request.limit is not None:
+            if request.limit == 0:
+                print("   [Generate] Limit=0, skipping synthesis.")
+                return DramaResponse(
+                    message="Analysis successful (Generation skipped)",
+                    segments_count=0,
+                    audio_url=None,
+                    srt_url=None,
+                    timeline=None
+                )
+            elif request.limit > 0:
+                print(f"   [Generate] Limiting synthesis to first {request.limit} segments.")
+                script = script[:request.limit]
+
+        # Step 3: Synthesize (calling the service directly, not the endpoint)
         # We need a temp dir for synthesis
         temp_dir = tempfile.mkdtemp(prefix="dramaflow_gen_")
         
