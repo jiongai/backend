@@ -61,7 +61,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.services.synthesizer import synthesize_drama
-from app.services.synthesizer import synthesize_drama
 from app.services.audio_engine import (
     generate_cast_metadata,
     tts_manager,
@@ -104,6 +103,10 @@ class SynthesizeRequest(BaseModel):
     script: list = Field(
         ...,
         description="Structured script segments to synthesize"
+    )
+    limit: Optional[int] = Field(
+        None,
+        description="Number of segments to generate. 0 = none. None = all."
     )
 
 
@@ -177,10 +180,13 @@ async def assign_voices(
     Useful for frontend 'Magic Fill' or pre-synthesis configuration.
     """
     try:
+        logger.info("Assign voices request received", user_tier=user_tier)
+        logger.info("Assign voices parameters", script=request.script)
+
         # Auto-assign voices
         enriched_script = tts_manager.assign_voices_to_script(request.script, user_tier=user_tier)
         
-        return {
+        response_data = {
             "message": "Voices assigned successfully",
             "script": enriched_script,
             "metadata": {
@@ -188,6 +194,9 @@ async def assign_voices(
                 "characters": list(set(s.get("character", "") for s in enriched_script if s.get("character")))
             }
         }
+        
+        logger.info("Assign voices response", response=response_data)
+        return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -219,9 +228,23 @@ async def synthesize_audio_drama(
     
     try:
         logger.info("Synthesize request received", user_tier=user_tier, script_segments=len(request.script))
-        # print(f"   [DEBUG] /synthesize params - Script:\n{json.dumps(request.script, ensure_ascii=False, indent=2)}")
+        logger.info("Request parameters", limit=request.limit, script=request.script)
 
         
+        if request.limit is not None:
+            if request.limit == 0:
+                logger.info("Limit=0, skipping synthesis")
+                return DramaResponse(
+                    message="Synthesis skipped (limit=0)",
+                    segments_count=0,
+                    audio_url=None,
+                    srt_url=None,
+                    timeline=None
+                )
+            elif request.limit > 0:
+                logger.info("Limiting synthesis", limit=request.limit)
+                request.script = request.script[:request.limit]
+
         # Result is now a dict with URLs
         result = await synthesize_drama(
             script=request.script,

@@ -422,27 +422,34 @@ class TTSManager:
             is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
             lang_key = "zh" if is_chinese else "en"
             
-            # 1. Determine Provider
-            provider_name = self.select_provider(seg_type, text, user_tier, emotion)
-            
-            # 2. Determine Voice ID
-            specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
-            
-            # Fallback for Google/Azure if specific_voice_id is None
-            if not specific_voice_id:
-                if provider_name == "google":
-                    voice_dict = VOICE_MAP["google"][lang_key]
-                    raw_id = voice_dict.get(gender, list(voice_dict.values())[0])
-                    specific_voice_id = f"google:{raw_id}"
-                elif provider_name == "azure":
-                    raw_id = VOICE_MAP["azure"][lang_key]
-                    specific_voice_id = f"azure:{raw_id}"
-                elif provider_name == "openai":
-                    specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+            # Check for Manual Voice Override
+            manual_voice = segment.get("voice_id")
+            if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
+                 # 1.1 If manual voice exists and is valid, preserve it!
+                 # Still might need to set provider for metadata if missing
+                 # But we don't overwrite it with auto-assignment.
+                 pass 
+            else:
+                # 1. Determine Provider
+                provider_name = self.select_provider(seg_type, text, user_tier, emotion)
+                
+                # 2. Determine Voice ID
+                specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
+                
+                # Fallback for Google/Azure if specific_voice_id is None
+                if not specific_voice_id:
+                    if provider_name == "google":
+                        voice_dict = VOICE_MAP["google"][lang_key]
+                        raw_id = voice_dict.get(gender, list(voice_dict.values())[0])
+                        specific_voice_id = f"google:{raw_id}"
+                    elif provider_name == "azure":
+                        raw_id = VOICE_MAP["azure"][lang_key]
+                        specific_voice_id = f"azure:{raw_id}"
+                    elif provider_name == "openai":
+                        specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
 
-            # 3. Write to Segment
-            # segment["provider"] = provider_name # Replaced by namespaced ID
-            segment["voice_id"] = specific_voice_id
+                # 3. Write to Segment
+                segment["voice_id"] = specific_voice_id
             
         return script
 
@@ -488,15 +495,12 @@ class TTSManager:
                      # Fallback to default calculation if unknown
                      pass
 
-             # Case 2b: Still missing provider or voice_id -> Calculate from scratch (Auto-Assignment)
+             # Case 2b: Still missing provider or voice_id
              if not provider_name or not specific_voice_id:
-                 import re
-                 is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-                 lang_key = "zh" if is_chinese else "en"
-                 
-                 seg_type = segment.get("type", "narration")
-                 provider_name = self.select_provider(seg_type, text, user_tier, emotion)
-                 specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
+                 logger.warn("Skipping generation: No voice assigned", segment_text=text[:20])
+                 return
+
+        # Determine emotion settings
         
         # Determine emotion settings
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
