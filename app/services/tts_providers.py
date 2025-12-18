@@ -3,6 +3,9 @@ import os
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Optional, Dict
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # Try imports, handle missing dependencies gracefully
 try:
@@ -254,7 +257,7 @@ class ElevenLabsTTSProvider(TTSProvider):
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    print(f"   [ElevenLabs] Retry attempt {attempt+1}/{max_retries}...")
+                    logger.warn("ElevenLabs retry attempt", attempt=attempt+1, max_retries=max_retries)
                     
                 # Note: ElevenLabs Python SDK generate returns generator or bytes.
                 # The 'convert' method is correct for V3 SDK.

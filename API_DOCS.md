@@ -6,9 +6,7 @@
 
 1. [通用说明](#1-通用说明)
 2. [核心功能](#2-核心功能)
-    - [POST /analyze](#21-post-analyze) (解析文本)
     - [POST /synthesize](#22-post-synthesize) (合成音频)
-    - [POST /generate](#23-post-generate) (全流程生成)
 3. [配置与辅助](#3-配置与辅助)
     - [GET /voices](#31-get-voices) (获取声音配置)
     - [POST /review](#32-post-review) (声音试听)
@@ -29,57 +27,13 @@
 | `X-OpenRouter-API-Key` | OpenRouter API Key (如有需要) | `sk-or-v1-...` |
 | `X-ElevenLabs-API-Key` | ElevenLabs API Key (付费语音合成) | `xi-...` |
 | `X-User-Tier` | 用户等级，影响路由策略 | `free` (默认) 或 `vip` |
+| `X-Request-ID` | 请求追踪 ID (可选) | `123e4567-e89b...` |
 
 ---
 
 ## 2. 核心功能
 
-### 2.2 POST `/analyze` / `/analyze_lite`
 
-仅进行文本分析，返回剧本 JSON，不进行音频合成。用于前端预览和修改剧本。
-*   `/analyze`: 使用 OpenRouter (Claude/GPT)
-*   `/analyze_lite`: 使用 Doubao (Volcengine)
-
-- **URL**: `/analyze` 或 `/analyze_lite`
-- **Body**: JSON
-
-
-#### 请求参数 (Body)
-
-| 参数名 | 类型 | 必填 | 限制 | 说明 |
-| :--- | :--- | :--- | :--- | :--- |
-| `text` | string | 是 | 10-10000 字符 | 小说文本内容 |
-
-#### 响应示例
-
-```json
-{
-  "script": [
-    {
-      "type": "narration",
-      "text": "The wind howled.",
-      "character": "Narrator",
-      "gender": "male",
-      "emotion": "fearful",
-      "character": "Narrator",
-      "gender": "male",
-      "emotion": "fearful",
-      "pacing": 1.0,
-      "voice_id": "cmn-TW-Wavenet-B",
-      "provider": "google"
-    }
-
-  ],
-  "metadata": {
-    "segments_count": 1,
-    "narration_count": 1,
-    "dialogue_count": 0,
-    "characters": ["Narrator"]
-  }
-}
-```
-
----
 
 ### 2.2 POST `/assign_voices` (New)
 
@@ -152,40 +106,7 @@
 
 ---
 
-### 2.3 POST `/generate`
 
-全流程接口：输入文本 -> 自动分析 -> 自动合成 -> 返回音频包。
-
-- **URL**: `/generate`
-- **Body**: JSON
-
-#### 请求参数 (Body)
-
-| 参数名 | 类型 | 必填 | 限制 | 说明 |
-| :--- | :--- | :--- | :--- | :--- |
-| `text` | string | 是 | 10-10000 字符 | 小说文本内容 |
-| `limit` | int | 否 | - | 生成片段数限制。<br>`1`: 只生成前 1 段<br>`5`: 生成前 5 段<br>`0`: 只分析不生成音频<br>不传: 生成全部 |
-
-#### 响应
-- **Content-Type**: `application/json`
-- **内容**: 返回音频和字幕的下载链接。
-
-```json
-{
-  "message": "Generation successful",
-  "segments_count": 5,
-  "audio_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.mp3",
-  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt",
-  "timeline": [
-    { "index": 1, "start": 0, "end": 5000 },
-    { "index": 2, "start": 5000, "end": 12000 }
-  ]
-}
-```
-- **注意**：`script` 数组中的每个对象应包含 `type`, `text`, `character`, `emotion` 等字段，以及可选的 `voice_id` 字段。
-
-
----
 
 ## 3. 配置与辅助
 

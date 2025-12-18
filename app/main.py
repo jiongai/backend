@@ -12,6 +12,13 @@ import json
 from pathlib import Path
 
 from typing import List, Dict, Optional, Any
+import structlog
+from asgi_correlation_id import CorrelationIdMiddleware
+from app.core.logging import configure_logging
+
+# Configure logging immediately
+configure_logging()
+logger = structlog.get_logger()
 
 # ========================================
 # Configure ffmpeg for Serverless
@@ -30,18 +37,18 @@ if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
         # This way pydub will find ffmpeg during initialization
         os.environ['FFMPEG_BINARY'] = ffmpeg_path
         os.environ['FFPROBE_BINARY'] = ffmpeg_path
-        print(f"✅ [main] Set FFMPEG_BINARY: {ffmpeg_path}")
+        logger.info("Set FFMPEG_BINARY", path=ffmpeg_path)
         
         # Also configure AudioSegment after import (belt and suspenders)
         from pydub import AudioSegment
         AudioSegment.converter = ffmpeg_path
         AudioSegment.ffmpeg = ffmpeg_path
         AudioSegment.ffprobe = ffmpeg_path
-        print(f"✅ [main] Configured AudioSegment")
+        logger.info("Configured AudioSegment")
     else:
-        print(f"⚠️  [main] ffmpeg not found")
+        logger.warn("ffmpeg not found in vendor directory")
 else:
-    print("ℹ️  [main] Running locally or on Railway, using system ffmpeg")
+    logger.info("Running locally or on Railway, using system ffmpeg")
 # ========================================
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header
@@ -53,7 +60,7 @@ from dotenv import load_dotenv
 # Load environment variables FIRST
 load_dotenv()
 
-from app.services.analyzer import analyze_text, analyze_text_doubao
+from app.services.synthesizer import synthesize_drama
 from app.services.synthesizer import synthesize_drama
 from app.services.audio_engine import (
     generate_cast_metadata,
@@ -87,21 +94,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add Request ID Middleware
+app.add_middleware(CorrelationIdMiddleware)
+
 
 # Request Models
-class DramaRequest(BaseModel):
-    """Request model for audio drama generation."""
-    text: str = Field(
-        ...,
-        description="Novel text to convert into audio drama",
-        min_length=10,
-        max_length=10000
-    )
-    limit: Optional[int] = Field(
-        None, 
-        description="Number of segments to generate. 0 = analyze only. None = all."
-    )
-
 class SynthesizeRequest(BaseModel):
     """Request model for synthesis from existing script."""
     script: list = Field(
@@ -141,9 +138,9 @@ def cleanup_temp_directory(directory: str):
     try:
         if os.path.exists(directory):
             shutil.rmtree(directory)
-            print(f"Cleaned up temp directory: {directory}")
+            logger.info("Cleaned up temp directory", directory=directory)
     except Exception as e:
-        print(f"Warning: Failed to cleanup temp directory {directory}: {e}")
+        logger.warn("Failed to cleanup temp directory", directory=directory, error=str(e))
 
 
 # API Endpoints
@@ -221,9 +218,8 @@ async def synthesize_audio_drama(
     temp_dir = tempfile.mkdtemp(prefix="dramaflow_synth_")
     
     try:
-        print(f"   [DEBUG] /synthesize params - User Tier: {user_tier}")
-        print(f"   [DEBUG] /synthesize params - Script:\n{json.dumps(request.script, ensure_ascii=False, indent=2)}")
-        print(f"Synthesizing from provided script ({len(request.script)} segments)...")
+        logger.info("Synthesize request received", user_tier=user_tier, script_segments=len(request.script))
+        # print(f"   [DEBUG] /synthesize params - Script:\n{json.dumps(request.script, ensure_ascii=False, indent=2)}")
 
         
         # Result is now a dict with URLs
@@ -251,90 +247,7 @@ async def synthesize_audio_drama(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/generate", response_model=DramaResponse)
-async def generate_audio_drama(
-    request: DramaRequest,
-    background_tasks: BackgroundTasks,
-    openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-API-Key"),
-    elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key"),
-    user_tier: str = Header("free", alias="X-User-Tier")  # "free" or "vip"
-):
-    """
-    Full pipeline: Analyze -> Synthesize.
-    """
-    # Get API keys
-    openrouter_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
-    elevenlabs_key = elevenlabs_api_key or os.getenv("ELEVENLABS_API_KEY")
-    
-    if not openrouter_key or not elevenlabs_key:
-        raise HTTPException(status_code=400, detail="API keys required")
-    
-    # Create unique temporary directory for analysis intermediate artifacts if needed,
-    # but synthesize_drama creates its own.
-    # However, analyze_text is pure logic.
-    
-    try:
-        # Step 1: Analyze
-        print(f"Analyzing text ({len(request.text)} characters)...")
-        try:
-            analysis_result = await analyze_text(request.text, openrouter_key)
-        except Exception as e:
-             raise HTTPException(status_code=504, detail=f"Analysis failed: {str(e)}")
 
-        script = analysis_result.get("script")
-        if not script:
-             raise HTTPException(status_code=500, detail="No script generated")
-             
-        # Step 2: Handle Limit Logic
-        if request.limit is not None:
-            if request.limit == 0:
-                print("   [Generate] Limit=0, skipping synthesis.")
-                return DramaResponse(
-                    message="Analysis successful (Generation skipped)",
-                    segments_count=0,
-                    audio_url=None,
-                    srt_url=None,
-                    timeline=None
-                )
-            elif request.limit > 0:
-                print(f"   [Generate] Limiting synthesis to first {request.limit} segments.")
-                script = script[:request.limit]
-
-        # Step 3: Synthesize (calling the service directly, not the endpoint)
-        # We need a temp dir for synthesis
-        temp_dir = tempfile.mkdtemp(prefix="dramaflow_gen_")
-        
-        try:
-            # Result is now a dict with URLs
-            result = await synthesize_drama(
-                script=script,
-                temp_dir=temp_dir,
-                openrouter_key=openrouter_key,
-                elevenlabs_key=elevenlabs_key,
-                user_tier=user_tier
-            )
-            
-            background_tasks.add_task(cleanup_temp_directory, temp_dir)
-            
-            return DramaResponse(
-                message="Generation successful",
-                segments_count=len(script),
-                audio_url=result["audio_url"],
-                srt_url=result["srt_url"],
-                timeline=result.get("timeline")
-            )
-        except Exception as e:
-            cleanup_temp_directory(temp_dir)
-            raise e
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error generating audio drama: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate audio drama: {str(e)}"
-        )
 
 @app.post("/review", response_class=FileResponse)
 async def review_voice(
@@ -354,7 +267,7 @@ async def review_voice(
     
     
     try:
-        print(f"   [DEBUG] /review params - Text: {request.text}, Voice: {request.voice_id}, Pacing: {request.pacing}, Emotion: {request.emotion}")
+        logger.info("Review request", text=request.text, voice=request.voice_id)
         # Construct a temporary segment forcing the voice
         # Truncate text to first 30 chars for preview
         truncated_text = request.text[:30]
@@ -401,88 +314,10 @@ async def review_voice(
 
     except Exception as e:
         cleanup_temp_directory(temp_dir)
-        print(f"Review generation failed: {e}")
+        logger.error("Review generation failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/analyze", response_model=dict)
-async def analyze_only(
-    request: DramaRequest,
-    openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-API-Key"),
-    user_tier: str = Header("free", alias="X-User-Tier")
-):
-    """
-    Analyze text and return the structured script without generating audio.
-    Useful for previewing the script before full generation.
-    """
-    # Get API key
-    openrouter_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
-    
-    if not openrouter_key:
-        raise HTTPException(
-            status_code=400,
-            detail="OpenRouter API key is required"
-        )
-    
-    try:
-        # Analyze text
-        result = await analyze_text(request.text, openrouter_key, user_tier=user_tier)
-        
-        # Add metadata
-        if "script" in result:
-            result["metadata"] = {
-                "segments_count": len(result["script"]),
-                "narration_count": sum(1 for s in result["script"] if s.get("type") == "narration"),
-                "dialogue_count": sum(1 for s in result["script"] if s.get("type") == "dialogue"),
-                "characters": list(set(s.get("character", "") for s in result["script"] if s.get("character")))
-            }
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to analyze text: {str(e)}"
-        )
 
-@app.post("/analyze_lite", response_model=dict)
-async def analyze_lite(
-    request: DramaRequest,
-    ark_api_key: Optional[str] = Header(None, alias="X-Ark-API-Key"),
-    user_tier: str = Header("free", alias="X-User-Tier")
-):
-    """
-    Analyze text using Doubao (Volcengine Ark).
-    Same input/output format as /analyze.
-    """
-    # Get API key
-    ark_key = ark_api_key or os.getenv("ARK_API_KEY")
-    
-    if not ark_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Ark API key is required (X-Ark-API-Key header or ARK_API_KEY env)"
-        )
-    
-    try:
-        # Analyze text using Doubao
-        result = await analyze_text_doubao(request.text, ark_key, user_tier=user_tier)
-        
-        # Add metadata (Same logic as standard analyze)
-        if "script" in result:
-            result["metadata"] = {
-                "segments_count": len(result["script"]),
-                "narration_count": sum(1 for s in result["script"] if s.get("type") == "narration"),
-                "dialogue_count": sum(1 for s in result["script"] if s.get("type") == "dialogue"),
-                "characters": list(set(s.get("character", "") for s in result["script"] if s.get("character")))
-            }
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to analyze text (Lite): {str(e)}"
-        )
 
 
 

@@ -10,6 +10,9 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 from datetime import datetime
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 from .tts_providers import (
     AzureTTSProvider, 
@@ -23,198 +26,31 @@ from .tts_providers import (
 # CONSTANTS & CONFIGURATION
 # ============================================================================
 
-USAGE_FILE = "tts_usage.json"
-AZURE_MONTHLY_LIMIT = 500000  # 500k characters
-
-# Voice Mappings (Hybrid Strategy)
-VOICE_MAP = {
-    # Level 1: Azure (Top Quality Free/Standard)
-    "azure": {
-        "en": "en-US-BrianNeural",
-        "zh": "zh-CN-YunxiNeural"
-    },
-    # Level 2: Google (Standard/Wavenet Fallback)
-    "google": {
-        # Defaults
-        "en": {"male": "en-US-Neural2-J", "female": "en-US-Neural2-F"},
-        "zh": {"male": "cmn-CN-Wavenet-C", "female": "cmn-CN-Wavenet-A"},
-        
-        # Extended Voice Pool
-        "pool": {
-            "zh": {
-                "female": [
-                    "cmn-CN-Wavenet-A", "cmn-CN-Wavenet-D", # Wavenet
-                    "cmn-TW-Wavenet-A"  # TW Wavenet
-                ],
-                "male": [
-                    "cmn-CN-Wavenet-C", "cmn-CN-Wavenet-B",
-                    "cmn-TW-Wavenet-B", "cmn-TW-Wavenet-C"
-                ]
-            },
-            "en": {
-                "female": [
-                    "en-US-Neural2-C", "en-US-Neural2-E", "en-US-Neural2-F", "en-US-Neural2-G", "en-US-Neural2-H",
-                    "en-US-Wavenet-C", "en-US-Wavenet-E", "en-US-Wavenet-F", "en-GB-Neural2-A", "en-GB-Neural2-C"
-                ],
-                "male": [
-                    "en-US-Neural2-A", "en-US-Neural2-D", "en-US-Neural2-I", "en-US-Neural2-J",
-                    "en-US-Wavenet-A", "en-US-Wavenet-B", "en-US-Wavenet-D", "en-GB-Neural2-B", "en-GB-Neural2-D"
-                ]
-            }
+# Load Configuration
+def load_voice_config():
+    config_path = Path(__file__).parent.parent / "config" / "voices.json"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error("Failed to load voice config", error=str(e))
+        # Return empty defaults to avoid crash, but system will be degraded
+        return {
+            "VOICE_MAP": {},
+            "EMOTION_SETTINGS": {},
+            "VOICE_SAMPLES": {},
+            "VOICE_LABELS": {},
+            "AZURE_MONTHLY_LIMIT": 500000
         }
-    },
-    # Level 3: OpenAI (VIP Narration)
-    "openai": {
-        "male": "onyx",
-        "female": "alloy" # or shimmer
-    },
 
-    # Level 4: ElevenLabs (High Emotion Dialogue)
-    "elevenlabs": {
-        # Defaults
-        "male": "pNInz6obpgDQGcFmaJgB",   # Adam (Default Male)
-        "female": "21m00Tcm4TlvDq8ikWAM", # Rachel (Default Female)
-        
-        # Extended Voice Pool for Deterministic Assignment
-        "pool": {
-            "male": [
-                "pNInz6obpgDQGcFmaJgB", # Adam
-                "ErXwobaYiN019PkySvjV", # Antoni
-                "VR6AewLTigWG4xSOukaG", # Arnold
-                "N2lVS1w4EtoT3dr4eOWO", # Callum
-                "IKne3meq5aSn9XLyUdCD", # Charlie
-                "2EiwWnXFnvU5JabPnv8n", # Clyde
-                "CYw3kZ02Hs0563khs1Fj", # Dave
-                "D38z5RcWu1voky8WS1ja", # Fin
-                "JBFqnCBsd6RMkjVDRZzb", # George
-                "TxGEqnHWrfWFTfGW9XjX", # Josh
-                "ODq5zmih8GrVes37Dizd", # Patrick
-                "yoZ06aMxZJJ28mfd3POQ", # Sam
-                "GBv7mTt0atIp3Br8iCZE", # Thomas
-            ],
-            "female": [
-                "21m00Tcm4TlvDq8ikWAM", # Rachel
-                "EXAVITQu4vr4xnSDxMaL", # Bella
-                "XB0fDUnXU5powFXDhCwa", # Charlotte
-                "AZnzlk1XvdvUeBnXmlld", # Domi
-                "ThT5KcBeYPX3keUQqHPh", # Dorothy
-                "MF3mGyEYCl7XYWbV9V6O", # Elli
-                "LcfcDJNUP1GQjkzn1xUU", # Emily
-                "jsCqWAovK2LkecY7zXl4", # Freya
-                "jBpfuIE2acCO8z3wKNLl", # Gigi
-                "z9fAnlkpzviPz146aGWa", # Glinda
-                "oWAxZDx7w5VEj9dCyTzz", # Grace
-                "cgSgspJ2msm6clMCkdW9", # Jessica
-                "pFZP5JQG7iQjIQuC4Bku", # Lily
-                "XrExE9yKIg1WjnnlVkGX", # Matilda
-                "piTKgcLEGmPE4e6mEKli", # Nicole
-            ]
-        }
-    }
-}
+_CONFIG = load_voice_config()
 
-# Emotion -> Voice Settings Mapping
-# Stability: Low = more emotion/varaiance. High = stable/monotone.
-# Similarity: High = clearer identity. Low = more fuzzy/creative.
-# Style: High = exaggerated.
-EMOTION_SETTINGS = {
-    "neutral":    {"stability": 0.60, "similarity_boost": 0.75, "style": 0.0},
-    "happy":      {"stability": 0.45, "similarity_boost": 0.80, "style": 0.3},
-    "sad":        {"stability": 0.40, "similarity_boost": 0.70, "style": 0.2},
-    "angry":      {"stability": 0.30, "similarity_boost": 0.80, "style": 0.6},
-    "fearful":    {"stability": 0.30, "similarity_boost": 0.65, "style": 0.5},
-    "surprised":  {"stability": 0.35, "similarity_boost": 0.75, "style": 0.4},
-    "whispering": {"stability": 0.50, "similarity_boost": 0.50, "style": 0.0}, # Low similarity allows breathiness
-    "shouting":   {"stability": 0.25, "similarity_boost": 0.80, "style": 0.7},
-}
-
-# Voice Samples (URLs)
-VOICE_SAMPLES = {
-    "openai": {
-        "alloy": "https://cdn.openai.com/API/docs/audio/alloy.wav",
-        "echo": "https://cdn.openai.com/API/docs/audio/echo.wav",
-        "fable": "https://cdn.openai.com/API/docs/audio/fable.wav",
-        "onyx": "https://cdn.openai.com/API/docs/audio/onyx.wav",
-        "nova": "https://cdn.openai.com/API/docs/audio/nova.wav",
-        "shimmer": "https://cdn.openai.com/API/docs/audio/shimmer.wav"
-    }
-}
-
-# Voice Labels (ID -> Name Map)
-VOICE_LABELS = {
-    # Azure
-    "en-US-BrianNeural": "Brian (Narrator)",
-    "zh-CN-YunxiNeural": "Yunxi (Narrator)",
-    
-    # Google (English)
-    "en-US-Neural2-A": "Steven (Classic)",
-    "en-US-Neural2-C": "Sarah (Bright)",
-    "en-US-Neural2-D": "Robert (Deep)",
-    "en-US-Neural2-E": "Emily (Soft)",
-    "en-US-Neural2-F": "Jennifer (Warm)",
-    "en-US-Neural2-G": "Female G (Neural2)", # Kept generic if no mapping decided
-    "en-US-Neural2-H": "Helen (Mature)",
-    "en-US-Neural2-I": "David (Strong)",
-    "en-US-Neural2-J": "Michael (Energetic)",
-    "en-US-Wavenet-A": "James (Standard)",
-    "en-US-Wavenet-B": "John (Formal)",
-    "en-US-Wavenet-C": "Mary (Sweet)",
-    "en-US-Wavenet-D": "William (Deep)",
-    "en-US-Wavenet-E": "Patricia (Soft)",
-    "en-US-Wavenet-F": "Linda (Warm)",
-    "en-GB-Neural2-A": "Female A (UK Neural2)",
-    "en-GB-Neural2-B": "Male B (UK Neural2)",
-    "en-GB-Neural2-C": "Female C (UK Neural2)",
-    "en-GB-Neural2-D": "Male D (UK Neural2)",
-
-    # Google (Chinese)
-    "cmn-CN-Wavenet-A": "小燕 (甜美)", # Xiaoyan
-    "cmn-CN-Wavenet-B": "云扬 (播音)", # Yunyang
-    "cmn-CN-Wavenet-C": "云希 (故事)", # Yunxi (Story)
-    "cmn-CN-Wavenet-D": "晓晓 (亲切)", # Xiaoxiao
-    "cmn-TW-Wavenet-A": "Female A (TW Wavenet)",
-    "cmn-TW-Wavenet-B": "Male B (TW Wavenet)",
-    "cmn-TW-Wavenet-C": "Male C (TW Wavenet)",
-
-
-    # OpenAI
-    "onyx": "Onyx (Deep Male)",
-    "alloy": "Alloy (Clear Female)",
-    "echo": "Echo (Narrator)",
-    "fable": "Fable (Expressive)",
-    "nova": "Nova (Energetic)",
-    "shimmer": "Shimmer (Soft)",
-
-    # ElevenLabs
-    "pNInz6obpgDQGcFmaJgB": "Adam (Deep)",
-    "21m00Tcm4TlvDq8ikWAM": "Rachel (Warm)",
-    "ErXwobaYiN019PkySvjV": "Antoni (Young)",
-    "VR6AewLTigWG4xSOukaG": "Arnold (Strong)",
-    "N2lVS1w4EtoT3dr4eOWO": "Callum (Calm)",
-    "IKne3meq5aSn9XLyUdCD": "Charlie (Friendly)",
-    "2EiwWnXFnvU5JabPnv8n": "Clyde (Warm)",
-    "CYw3kZ02Hs0563khs1Fj": "Dave (Young UK)",
-    "D38z5RcWu1voky8WS1ja": "Fin (Irish)",
-    "JBFqnCBsd6RMkjVDRZzb": "George (Formal UK)",
-    "TxGEqnHWrfWFTfGW9XjX": "Josh (News)",
-    "ODq5zmih8GrVes37Dizd": "Patrick (Authoritative)",
-    "yoZ06aMxZJJ28mfd3POQ": "Sam (Lively)",
-    "GBv7mTt0atIp3Br8iCZE": "Thomas (Gentle)",
-    "EXAVITQu4vr4xnSDxMaL": "Bella (Soft)",
-    "XB0fDUnXU5powFXDhCwa": "Charlotte (Elegant)",
-    "AZnzlk1XvdvUeBnXmlld": "Domi (Energetic)",
-    "ThT5KcBeYPX3keUQqHPh": "Dorothy (Wise)",
-    "MF3mGyEYCl7XYWbV9V6O": "Elli (Lively)",
-    "LcfcDJNUP1GQjkzn1xUU": "Emily (Calm)",
-    "jsCqWAovK2LkecY7zXl4": "Freya (Young US)",
-    "jBpfuIE2acCO8z3wKNLl": "Gigi (Enthusiastic)",
-    "z9fAnlkpzviPz146aGWa": "Glinda (Mysterious)",
-    "oWAxZDx7w5VEj9dCyTzz": "Grace (Southern)",
-    "cgSgspJ2msm6clMCkdW9": "Jessica (Professional)",
-    "pFZP5JQG7iQjIQuC4Bku": "Lily (Young UK)",
-    "XrExE9yKIg1WjnnlVkGX": "Matilda (Narrative)",
-    "piTKgcLEGmPE4e6mEKli": "Nicole (Energetic)"
-}
+VOICE_MAP = _CONFIG.get("VOICE_MAP", {})
+EMOTION_SETTINGS = _CONFIG.get("EMOTION_SETTINGS", {})
+VOICE_SAMPLES = _CONFIG.get("VOICE_SAMPLES", {})
+VOICE_LABELS = _CONFIG.get("VOICE_LABELS", {})
+AZURE_MONTHLY_LIMIT = _CONFIG.get("AZURE_MONTHLY_LIMIT", 500000)
+USAGE_FILE = Path(__file__).resolve().parent.parent.parent / "tts_usage.json"
 
 def get_enriched_voice_map() -> Dict:
     """
@@ -489,7 +325,7 @@ class TTSManager:
         
         voice_index = hash_int % len(target_pool)
         selected_voice = target_pool[voice_index]
-        print(f"   [Voice Assignment] '{character}' ({gender}) -> {provider.upper()}: {selected_voice} (Index: {voice_index})")
+        logger.info("Voice assigned", character=character, gender=gender, provider=provider, voice=selected_voice, index=voice_index)
         return f"{provider}:{selected_voice}"
         
     def _get_monthly_usage(self) -> int:
@@ -522,7 +358,7 @@ class TTSManager:
             with open(USAGE_FILE, 'w') as f:
                 json.dump(data, f)
         except Exception as e:
-            print(f"Warning: Failed to update usage stats: {e}")
+            logger.warn("Failed to update usage stats", error=str(e))
 
     def select_provider(self, segment_type: str, text: str, user_tier: str, emotion: str) -> str:
         """
@@ -665,7 +501,14 @@ class TTSManager:
         # Determine emotion settings
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
         
-        print(f"   [TTS Manager] Routing '{text[:15]}...' -> {provider_name.upper()} (User: {user_tier}, Voice: {specific_voice_id or 'Default'}, Settings: {settings}, Speed: {pacing})")
+        logger.info("Routing TTS request", 
+            text_snippet=text[:15], 
+            provider=provider_name, 
+            user_tier=user_tier, 
+            voice=specific_voice_id or 'Default', 
+            settings=settings, 
+            pacing=pacing
+        )
         
         # Execute based on provider
         if provider_name == "azure":

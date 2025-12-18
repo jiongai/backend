@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import re
 import json
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 from .audio_engine import generate_segment_audio, generate_cast_metadata
@@ -43,10 +46,10 @@ async def synthesize_drama(
     has_chinese = bool(re.search(r'[\u4e00-\u9fff]', full_text))
     if has_chinese:
         narrator_voice = "zh-CN-YunxiNeural"
-        print(f"   [Synthesizer] Detected Chinese contents. Using narrator: {narrator_voice}")
+        logger.info("Detected Chinese contents", voice=narrator_voice)
     else:
         narrator_voice = "en-US-BrianNeural"
-        print(f"   [Synthesizer] Detected English contents. Using narrator: {narrator_voice}")
+        logger.info("Detected English contents", voice=narrator_voice)
 
     # Step 0.5: Enforce Voice Assignment (Double Insurance)
     # Ensure all segments have a valid voice_id assigned before processing.
@@ -55,7 +58,7 @@ async def synthesize_drama(
     script = tts_manager.assign_voices_to_script(script, user_tier=user_tier)
 
     # Step 1: Generate Narration (Phase 1)
-    print("   [Synthesizer] Phase 1: Generating Narration...")
+    logger.info("Starting Phase 1: Narration")
     
     script_with_indices = list(enumerate(script))
     narration_items = [(i, seg) for i, seg in script_with_indices if seg["type"] == "narration"]
@@ -77,12 +80,12 @@ async def synthesize_drama(
             # Assign paths back to script
             for (idx, _), path in zip(narration_items, narration_paths):
                 script[idx]["audio_file_path"] = path
-            print(f"   [Synthesizer] ✅ Generated {len(narration_paths)} narration segments")
+            logger.info("Generated narration segments", count=len(narration_paths))
         except Exception as e:
             raise Exception(f"Narration generation failed: {str(e)}")
 
     # Step 2: Generate Dialogue (Phase 2)
-    print("   [Synthesizer] Phase 2: Generating Dialogue (ElevenLabs)...")
+    logger.info("Starting Phase 2: Dialogue", provider="ElevenLabs")
     
     if dialogue_items:
         # ElevenLabs concurrency limit
@@ -107,12 +110,12 @@ async def synthesize_drama(
             # Assign paths back to script
             for (idx, _), path in zip(dialogue_items, dialogue_paths):
                 script[idx]["audio_file_path"] = path
-            print(f"   [Synthesizer] ✅ Generated {len(dialogue_paths)} dialogue segments")
+            logger.info("Generated dialogue segments", count=len(dialogue_paths))
         except Exception as e:
             raise Exception(f"Dialogue generation failed: {str(e)}")
             
     # Step 3: Merge and SRT
-    print("   [Synthesizer] Merging audio and generating subtitles...")
+    logger.info("Merging audio and generating subtitles")
     try:
         final_audio_path, final_srt_path, timeline_data = merge_audio_and_generate_srt(
             segments=script,
@@ -122,7 +125,7 @@ async def synthesize_drama(
         raise Exception(f"Post-production failed: {str(e)}")
         
     # Step 4: Upload to Cloudflare R2
-    print("   [Synthesizer] Uploading artifacts to R2...")
+    logger.info("Uploading artifacts to R2")
     
     # Generate IDs
     # In a real app, project_id might come from the request. 
@@ -160,7 +163,7 @@ async def synthesize_drama(
         public_domain = os.getenv("R2_PUBLIC_DOMAIN")
         if not public_domain:
             # Fallback to just the key if domain not set, or warn
-            print("⚠️ R2_PUBLIC_DOMAIN not set. Returning keys instead of full URLs.")
+            logger.warn("R2_PUBLIC_DOMAIN not set", action="returning_keys_only")
             audio_url = audio_key
             srt_url = srt_key
         else:
@@ -169,9 +172,7 @@ async def synthesize_drama(
             audio_url = f"{public_domain}/{audio_key}"
             srt_url = f"{public_domain}/{srt_key}"
             
-        print(f"   [Synthesizer] Upload Complete.")
-        print(f"   Audio: {audio_url}")
-        print(f"   SRT: {srt_url}")
+        logger.info("Upload Complete", audio=audio_url, srt=srt_url)
         
         # Remove temp files immediately (as requested)
         # We are inside a temp_dir managed by the caller (synthesize_drama's temp_dir arg),
