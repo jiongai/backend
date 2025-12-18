@@ -48,6 +48,12 @@ async def synthesize_drama(
         narrator_voice = "en-US-BrianNeural"
         print(f"   [Synthesizer] Detected English contents. Using narrator: {narrator_voice}")
 
+    # Step 0.5: Enforce Voice Assignment (Double Insurance)
+    # Ensure all segments have a valid voice_id assigned before processing.
+    # This covers cases where frontend sends raw chunks.
+    from .audio_engine import tts_manager
+    script = tts_manager.assign_voices_to_script(script, user_tier=user_tier)
+
     # Step 1: Generate Narration (Phase 1)
     print("   [Synthesizer] Phase 1: Generating Narration...")
     

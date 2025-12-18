@@ -170,6 +170,32 @@ async def health_check():
     }
 
 
+@app.post("/assign_voices", response_model=Dict[str, Any])
+async def assign_voices(
+    request: SynthesizeRequest,
+    user_tier: str = Header("free", alias="X-User-Tier")
+):
+    """
+    Assign voices to a script without generating audio.
+    Useful for frontend 'Magic Fill' or pre-synthesis configuration.
+    """
+    try:
+        # Auto-assign voices
+        enriched_script = tts_manager.assign_voices_to_script(request.script, user_tier=user_tier)
+        
+        return {
+            "message": "Voices assigned successfully",
+            "script": enriched_script,
+            "metadata": {
+                "segments_count": len(enriched_script),
+                "characters": list(set(s.get("character", "") for s in enriched_script if s.get("character")))
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 @app.post("/synthesize", response_model=DramaResponse)
 async def synthesize_audio_drama(
     request: SynthesizeRequest,

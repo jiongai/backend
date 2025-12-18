@@ -81,6 +81,41 @@
 
 ---
 
+### 2.2 POST `/assign_voices` (New)
+
+为剧本中的角色分配声音 ID (Voice ID)。前端在生成/编辑完剧本后，调用此接口获取系统的声音分配建议。
+
+- **URL**: `/assign_voices`
+- **Body**: JSON (SynthesizeRequest)
+
+#### 请求参数 (Body)
+
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `script` | array | 是 | 剧本片段数组。其中 `voice_id` 可以为空字符串。 |
+
+#### 响应
+- **Content-Type**: `application/json`
+
+```json
+{
+  "message": "Voices assigned successfully",
+  "script": [
+    {
+       "type": "dialogue",
+       "text": "Hello",
+       "character": "Harry",
+       "voice_id": "elevenlabs:Adam", 
+       "voice_name": "Adam (Deep)"
+       ...
+    }
+  ],
+  "metadata": ...
+}
+```
+
+---
+
 ### 2.2 POST `/synthesize`
 
 将结构化的脚本（JSON 格式）合成为完整的音频剧。通常配合前端编辑后的脚本使用。
