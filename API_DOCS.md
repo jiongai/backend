@@ -81,7 +81,7 @@
 
 | 参数名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `script` | array | 是 | 结构化的脚本数组。**手动指定 Voice (Manual Override)**: <br>如果脚本中的某个段落包含 `voice_id` 字段且值不是 "pending", 系统将**强制使用**该 Voice ID (例如 "en-US-Neural2-J") 进行合成，而忽略自动分配逻辑。<br>支持对话角色 (`dialogue`) 和旁白 (`narration`)。 |
+| `script` | array | 是 | 结构化的脚本数组。**手动指定 Voice (Manual Override)**: <br>如果脚本中的某个段落包含 `voice_id` 字段且值不是 "", 系统将**强制使用**该 Voice ID (例如 "en-US-Neural2-J") 进行合成，而忽略自动分配逻辑。<br>支持对话角色 (`dialogue`) 和旁白 (`narration`)。 |
 | `limit` | int | 否 | - | 生成片段数限制。<br>`1`: 只生成前 1 段<br>`5`: 生成前 5 段<br>`0`: 不生成音频<br>不传: 生成全部 |
 
 

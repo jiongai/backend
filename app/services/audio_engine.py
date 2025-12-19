@@ -153,7 +153,7 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         manual_voice = first_narration.get("voice_id") # Changed from 'voice'
         is_override = False
         
-        if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
+        if manual_voice and manual_voice != "" and isinstance(manual_voice, str) and manual_voice.strip():
              is_override = True
              voice_id = manual_voice.strip()
 
@@ -223,7 +223,7 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         manual_voice = segment.get("voice_id") # Changed from 'voice'
         is_override = False
         
-        if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
+        if manual_voice and manual_voice != "" and isinstance(manual_voice, str) and manual_voice.strip():
              is_override = True
              voice_id = manual_voice.strip()
 
@@ -424,7 +424,7 @@ class TTSManager:
             
             # Check for Manual Voice Override
             manual_voice = segment.get("voice_id")
-            if manual_voice and manual_voice != "pending" and isinstance(manual_voice, str) and manual_voice.strip():
+            if manual_voice and manual_voice != "" and isinstance(manual_voice, str) and manual_voice.strip():
                  # 1.1 If manual voice exists and is valid, preserve it!
                  # Still might need to set provider for metadata if missing
                  # But we don't overwrite it with auto-assignment.
