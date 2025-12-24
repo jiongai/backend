@@ -137,6 +137,11 @@ class DeleteFilesRequest(BaseModel):
     audio_url: Optional[str] = Field(None, description="URL of the audio file to delete")
     srt_url: Optional[str] = Field(None, description="URL of the SRT file to delete")
 
+class MoveFilesToTempRequest(BaseModel):
+    """Request model for moving files back to temp."""
+    audio_url: str = Field(..., description="Current URL of the audio file (must be in 'saved')")
+    srt_url: str = Field(..., description="Current URL of the SRT file (must be in 'saved')")
+
 
 
 
@@ -408,6 +413,37 @@ async def delete_files(request: DeleteFilesRequest):
         }
     except Exception as e:
         logger.error("Delete files failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/move_files_to_temp", response_model=Dict[str, str])
+async def move_files_to_temp(request: MoveFilesToTempRequest):
+    """
+    Move files from 'saved' folder back to 'temp' folder.
+    Returns the new URLs.
+    """
+    from app.services.storage import r2_storage
+    
+    try:
+        logger.info("Move files to temp request", audio=request.audio_url, srt=request.srt_url)
+        
+        # Move Audio
+        new_audio_url = r2_storage.move_file_to_temp(request.audio_url)
+        
+        # Move SRT
+        new_srt_url = r2_storage.move_file_to_temp(request.srt_url)
+        
+        logger.info("Files moved to temp", audio=new_audio_url, srt=new_srt_url)
+        
+        return {
+            "audio_url": new_audio_url,
+            "srt_url": new_srt_url
+        }
+    except ValueError as ve:
+        logger.warn("Move files validation failed", error=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error("Move files failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/voices", response_model=dict)

@@ -196,5 +196,83 @@ class R2Storage:
             print(f"❌ R2 Delete Failed: {e}")
             return False
 
+    def move_file_to_temp(self, source_url: str) -> str:
+        """
+        Moves a file from 'saved' folder back to 'temp' folder.
+        Actually performs Copy (to new temp key) + Delete (source).
+        Returns new public URL.
+        """
+        if not self.s3_client:
+             raise RuntimeError("R2 Client is not configured")
+        
+        from uuid import uuid4
+
+        # 1. Parse Key from URL
+        r2_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
+        clean_domain = r2_domain.replace("https://", "").replace("http://", "").rstrip("/")
+        clean_source = source_url.replace("https://", "").replace("http://", "")
+        
+        if clean_domain and clean_source.startswith(clean_domain):
+            source_key = clean_source[len(clean_domain):].lstrip("/")
+        else:
+            if "projects/" in clean_source:
+                source_key = clean_source[clean_source.find("projects/"):]
+            else:
+                 raise ValueError("Invalid URL format: Could not extract object key")
+
+        # 2. Validation: Must be in 'saved' folder
+        if "/saved/" not in source_key:
+             raise ValueError("Source file is not in 'saved' folder")
+
+        # 3. Generate NEW Destination Key in 'temp'
+        # Current: projects/{project_id}/saved/{filename}
+        # Target: projects/{project_id}/temp/{NEW_UUID}{ext}
+        
+        parts = source_key.split("/")
+        # We assume standard structure: projects/{project_id}/...
+        if len(parts) < 3 or parts[0] != "projects":
+             # Try to start from 'projects' if path is deeper or different, but strictly we need project_id
+             # Let's rely on finding "projects/" and taking the next token as project_id
+             try:
+                 idx = parts.index("projects")
+                 project_id = parts[idx+1]
+             except (ValueError, IndexError):
+                 raise ValueError("Could not determine project_id from key")
+        else:
+             project_id = parts[1]
+
+        _, ext = os.path.splitext(source_key)
+        if not ext:
+            ext = ".mp3"
+
+        new_uuid = str(uuid4())
+        dest_key = f"projects/{project_id}/temp/{new_uuid}{ext}"
+
+        print(f"🔄 Moving to Temp: {source_key} -> {dest_key}")
+
+        try:
+            # COPY
+            self.s3_client.copy_object(
+                Bucket=self.bucket_name,
+                CopySource={'Bucket': self.bucket_name, 'Key': source_key},
+                Key=dest_key,
+                ACL='public-read'
+            )
+            
+            # DELETE Source
+            self.s3_client.delete_object(
+                Bucket=self.bucket_name,
+                Key=source_key
+            )
+            print(f"🗑️ Deleted source from saved: {source_key}")
+            
+            # Return new URL
+            new_url = f"{os.getenv('R2_PUBLIC_DOMAIN')}/{dest_key}"
+            return new_url
+            
+        except ClientError as e:
+            print(f"❌ R2 Move Failed: {e}")
+            raise e
+
 # Singleton instance
 r2_storage = R2Storage()

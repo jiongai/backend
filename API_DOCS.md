@@ -8,7 +8,8 @@
 2. [核心功能](#2-核心功能)
     - [POST /synthesize](#22-post-synthesize) (合成音频)
 3. [配置与辅助](#3-配置与辅助)
-    - [POST /del_files](#24-post-del_files) (删除文件)
+    - [POST /move_files_to_temp](#24-post-move_files_to_temp) (移回临时)
+    - [POST /del_files](#25-post-del_files) (删除文件)
     - [GET /voices](#31-get-voices) (获取声音配置)
     - [POST /review](#32-post-review) (声音试听)
     - [GET /health](#33-get-health) (健康检查)
@@ -140,7 +141,36 @@
 
 ---
 
-### 2.4 POST `/del_files` (New)
+---
+
+### 2.4 POST `/move_files_to_temp` (New)
+
+将 `saved` 文件夹中的文件移动回 `temp` 文件夹（生成新 UUID）。
+这会使文件重新受制于生命周期管理规则（如自动过期）。
+
+- **URL**: `/move_files_to_temp`
+- **Body**: JSON
+
+#### 请求参数 (Body)
+
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `audio_url` | string | 是 | 当前位于 saved 文件夹的音频文件 URL |
+| `srt_url` | string | 是 | 当前位于 saved 文件夹的字幕文件 URL |
+
+#### 响应
+- **Content-Type**: `application/json`
+
+```json
+{
+  "audio_url": "https://pub-xxxx.r2.dev/projects/demos/temp/new_uuid.mp3",
+  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/temp/new_uuid.srt"
+}
+```
+
+---
+
+### 2.5 POST `/del_files` (New)
 
 直接从云存储中删除指定的文件的接口。小心使用，删除后不可恢复。
 
