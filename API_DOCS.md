@@ -8,6 +8,7 @@
 2. [核心功能](#2-核心功能)
     - [POST /synthesize](#22-post-synthesize) (合成音频)
 3. [配置与辅助](#3-配置与辅助)
+    - [POST /del_files](#24-post-del_files) (删除文件)
     - [GET /voices](#31-get-voices) (获取声音配置)
     - [POST /review](#32-post-review) (声音试听)
     - [GET /health](#33-get-health) (健康检查)
@@ -93,8 +94,8 @@
 {
   "message": "Synthesis successful",
   "segments_count": 5,
-  "audio_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.mp3",
-  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/uuid.srt",
+  "audio_url": "https://pub-xxxx.r2.dev/projects/demos/temp/uuid.mp3",
+  "srt_url": "https://pub-xxxx.r2.dev/projects/demos/temp/uuid.srt",
   "timeline": [
     { "index": 1, "start": 0, "end": 5000 },
     { "index": 2, "start": 5000, "end": 12000 }
@@ -107,6 +108,68 @@
 
 ---
 
+### 2.3 POST `/save_files` (New)
+
+- **Temp 来源**: 原文件会被**移动**（复制并删除）。适用于首次保存。
+- **Saved 来源**: 原文件会被**复制**（保留原文件）。适用于另存为/版本管理。
+系统中总是会生成一个新的 UUID。
+
+- **URL**: `/save_files`
+- **Body**: JSON
+
+#### 请求参数 (Body)
+
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `audio_url` | string | 是 | 源音频文件的 URL (可以是 temp, 也可以是 saved) |
+| `srt_url` | string | 是 | 源字幕文件的 URL (可以是 temp, 也可以是 saved) |
+
+#### 响应
+- **Content-Type**: `application/json`
+
+```json
+{
+  "audio_url": "https://pub-xxxx.r2.dev/projects/Demos/saved/uuid.mp3",
+  "srt_url": "https://pub-xxxx.r2.dev/projects/Demos/saved/uuid.srt"
+}
+```
+
+---
+
+
+
+---
+
+### 2.4 POST `/del_files` (New)
+
+直接从云存储中删除指定的文件的接口。小心使用，删除后不可恢复。
+
+- **URL**: `/del_files`
+- **Body**: JSON
+
+#### 请求参数 (Body)
+
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `audio_url` | string | 否 | 要删除的音频文件 URL |
+| `srt_url` | string | 否 | 要删除的字幕文件 URL |
+
+*至少提供一个参数*
+
+#### 响应
+- **Content-Type**: `application/json`
+
+```json
+{
+  "message": "Files deletion processed",
+  "details": {
+    "audio": true,
+    "srt": true
+  }
+}
+```
+
+---
 
 
 ## 3. 配置与辅助

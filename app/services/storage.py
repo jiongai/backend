@@ -28,7 +28,7 @@ class R2Storage:
             print(f"❌ Failed to initialize R2 client: {e}")
             self.s3_client = None
 
-    def upload_file(self, file_path: str, project_id: str, chapter_id: str, content_type: str = 'audio/mpeg') -> str:
+    def upload_file(self, file_path: str, project_id: str, chapter_id: str, content_type: str = 'audio/mpeg', subfolder: str = "") -> str:
         """
         Uploads a file to Cloudflare R2 with best practices.
         
@@ -51,8 +51,10 @@ class R2Storage:
             ext = ".mp3"
 
         # 1. Key Naming (Folder Structure)
-        # projects/{project_id}/{chapter_id}.{ext}
-        object_key = f"projects/{project_id}/{chapter_id}{ext}"
+        # projects/{project_id}/{subfolder}/{chapter_id}.{ext}
+        # Clean subfolder
+        subfolder_path = f"{subfolder}/" if subfolder else ""
+        object_key = f"projects/{project_id}/{subfolder_path}{chapter_id}{ext}"
         
         try:
             print(f"🚀 Uploading to R2: {object_key}...")
@@ -79,6 +81,120 @@ class R2Storage:
         except Exception as e:
             print(f"❌ An unexpected error occurred during upload: {e}")
             raise e
+
+    def save_file_as_new(self, source_url: str) -> str:
+        """
+        Copies a file (from temp or saved) to a NEW 'saved' location with a NEW UUID.
+        Returns the new public URL.
+        """
+        if not self.s3_client:
+             raise RuntimeError("R2 Client is not configured")
+        
+        from uuid import uuid4
+
+        # 1. Parse Key from URL
+        r2_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
+        clean_domain = r2_domain.replace("https://", "").replace("http://", "").rstrip("/")
+        
+        # Remove protocol from input
+        clean_source = source_url.replace("https://", "").replace("http://", "")
+        
+        if clean_domain and clean_source.startswith(clean_domain):
+            source_key = clean_source[len(clean_domain):].lstrip("/")
+        else:
+            # Fallback
+            if "projects/" in clean_source:
+                source_key = clean_source[clean_source.find("projects/"):]
+            else:
+                 raise ValueError("Invalid URL format: Could not extract object key")
+
+        # 2. Extract Project ID and Extension
+        # Key format assumption: projects/{project_id}/{subfolder}/{filename}
+        # OR projects/{project_id}/{filename} (legacy)
+        
+        parts = source_key.split("/")
+        # parts[0] = "projects"
+        # parts[1] = project_id
+        
+        if len(parts) < 3 or parts[0] != "projects":
+             raise ValueError(f"Unexpected key format: {source_key}")
+             
+        project_id = parts[1]
+        
+        # Get extension
+        _, ext = os.path.splitext(source_key)
+        if not ext:
+            ext = ".mp3" # default fallback?
+
+        # 3. Generate NEW Destination Key
+        # Format: projects/{project_id}/saved/{NEW_UUID}{ext}
+        new_uuid = str(uuid4())
+        dest_key = f"projects/{project_id}/saved/{new_uuid}{ext}"
+
+        print(f"👯 Copying R2 Object: {source_key} -> {dest_key}")
+
+        try:
+            # COPY
+            self.s3_client.copy_object(
+                Bucket=self.bucket_name,
+                CopySource={'Bucket': self.bucket_name, 'Key': source_key},
+                Key=dest_key,
+                ACL='public-read'
+            )
+            
+            # Conditional Delete (Move if temp, Copy if saved)
+            if "/temp/" in source_key:
+                try:
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=source_key
+                    )
+                    print(f"🗑️ Deleted temp source: {source_key}")
+                except Exception as del_err:
+                     print(f"⚠️ Failed to delete temp source: {del_err}")
+            
+            # Return new URL
+            new_url = f"{os.getenv('R2_PUBLIC_DOMAIN')}/{dest_key}"
+            return new_url
+            
+        except ClientError as e:
+            print(f"❌ R2 Copy Failed: {e}")
+            raise e
+
+    def delete_file(self, file_url: str) -> bool:
+        """
+        Deletes a file from R2 based on its public URL.
+        Returns True if successful, False otherwise.
+        """
+        if not self.s3_client:
+             raise RuntimeError("R2 Client is not configured")
+
+        try:
+            # 1. Parse Key from URL (Same logic as save_file_as_new)
+            r2_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
+            clean_domain = r2_domain.replace("https://", "").replace("http://", "").rstrip("/")
+            clean_source = file_url.replace("https://", "").replace("http://", "")
+            
+            if clean_domain and clean_source.startswith(clean_domain):
+                source_key = clean_source[len(clean_domain):].lstrip("/")
+            else:
+                if "projects/" in clean_source:
+                    source_key = clean_source[clean_source.find("projects/"):]
+                else:
+                     logger.warn("Delete failed: Invalid URL", url=file_url)
+                     return False
+            
+            print(f"🗑️ Deleting R2 Object: {source_key}")
+            
+            self.s3_client.delete_object(
+                Bucket=self.bucket_name,
+                Key=source_key
+            )
+            return True
+            
+        except Exception as e:
+            print(f"❌ R2 Delete Failed: {e}")
+            return False
 
 # Singleton instance
 r2_storage = R2Storage()

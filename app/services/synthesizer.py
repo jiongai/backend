@@ -128,7 +128,7 @@ async def synthesize_drama(
     # Generate IDs
     # In a real app, project_id might come from the request. 
     # For now, we put everything in a 'demos' folder or similar.
-    project_id = "demos"
+    project_id = os.getenv("R2_PROJECT_ID", "Demos") # Updated to use Env Var
     chapter_id = str(uuid4())
     
     try:
@@ -137,7 +137,8 @@ async def synthesize_drama(
             file_path=final_audio_path,
             project_id=project_id,
             chapter_id=chapter_id,
-            content_type="audio/mpeg"
+            content_type="audio/mpeg",
+            subfolder="temp"
         )
         
         # Upload SRT
@@ -145,7 +146,8 @@ async def synthesize_drama(
             file_path=final_srt_path,
             project_id=project_id,
             chapter_id=chapter_id,
-            content_type="application/x-subrip" # Standard for SRT
+            content_type="application/x-subrip", # Standard for SRT
+            subfolder="temp"
         )
         
         # Construct Public URLs

@@ -126,6 +126,16 @@ class ReviewRequest(BaseModel):
     voice_id: str = Field(..., description="Voice ID to test")
     pacing: Optional[float] = Field(1.0, description="Speaking speed (0.25-4.0)")
     emotion: Optional[str] = Field("neutral", description="Emotion style")
+    
+class SaveFilesRequest(BaseModel):
+    """Request model for saving/copying files."""
+    audio_url: str = Field(..., description="Current URL of the audio file")
+    srt_url: str = Field(..., description="Current URL of the SRT file")
+
+class DeleteFilesRequest(BaseModel):
+    """Request model for deleting files."""
+    audio_url: Optional[str] = Field(None, description="URL of the audio file to delete")
+    srt_url: Optional[str] = Field(None, description="URL of the SRT file to delete")
 
 
 
@@ -342,7 +352,63 @@ async def review_voice(
 
 
 
+        raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/save_files", response_model=Dict[str, str])
+async def save_files(request: SaveFilesRequest):
+    """
+    Save generated files (from temp or saved) as NEW standalone copies.
+    Returns the new URLs.
+    """
+    from app.services.storage import r2_storage
+    
+    try:
+        logger.info("Save files request", audio=request.audio_url, srt=request.srt_url)
+        
+        # Save Audio (Copy to New UUID)
+        new_audio_url = r2_storage.save_file_as_new(request.audio_url)
+        
+        # Save SRT (Copy to New UUID)
+        new_srt_url = r2_storage.save_file_as_new(request.srt_url)
+        
+        logger.info("Files saved and isolated", audio=new_audio_url, srt=new_srt_url)
+        
+        return {
+            "audio_url": new_audio_url,
+            "srt_url": new_srt_url
+        }
+    except ValueError as ve:
+        logger.warn("Save files validation failed", error=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error("Save files failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/del_files")
+async def delete_files(request: DeleteFilesRequest):
+    """
+    Delete audio and/or SRT files from storage.
+    """
+    from app.services.storage import r2_storage
+    
+    results = {}
+    try:
+        if request.audio_url:
+            results["audio"] = r2_storage.delete_file(request.audio_url)
+        
+        if request.srt_url:
+            results["srt"] = r2_storage.delete_file(request.srt_url)
+            
+        logger.info("Delete files request processed", results=results)
+        return {
+            "message": "Files deletion processed",
+            "details": results
+        }
+    except Exception as e:
+        logger.error("Delete files failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/voices", response_model=dict)
 async def get_available_voices():
