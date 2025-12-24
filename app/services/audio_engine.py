@@ -43,6 +43,18 @@ def load_voice_config():
             "AZURE_MONTHLY_LIMIT": 500000
         }
 
+def load_avatar_map():
+    map_path = Path(__file__).parent.parent / "config" / "avatar_map.json"
+    try:
+        if map_path.exists():
+            with open(map_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warn("Failed to load avatar map", error=str(e))
+    return {}
+
+_AVATAR_MAP = load_avatar_map()
+
 _CONFIG = load_voice_config()
 
 VOICE_MAP = _CONFIG.get("VOICE_MAP", {})
@@ -64,7 +76,8 @@ def get_enriched_voice_map() -> Dict:
             # It's a voice ID (leaf)
             return {
                 "id": f"{provider_name}:{node}", # Keep namespacing!
-                "name": VOICE_LABELS.get(node, node) # Fallback to ID if no name found
+                "name": VOICE_LABELS.get(node, node), # Fallback to ID if no name found
+                "avatar_url": _AVATAR_MAP.get(node) # Inject Avatar URL
                 # "provider": provider_name # Removed as per request
             }
         elif isinstance(node, dict):

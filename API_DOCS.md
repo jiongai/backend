@@ -135,12 +135,12 @@
   "voice_map": {
     "Basic": { 
       "en": { 
-        "male": { "id": "google:en-US-Neural2-J", "name": "Male J (Neural2)" }
+        "male": { "id": "google:en-US-Neural2-J", "name": "Male J (Neural2)", "avatar_url": "https://pub.r2.dev/voice-avatars/en-US-Neural2-J.jpeg" }
       },
       "pool": { ... }
     },
     "Advance": {
-      "male": { "id": "elevenlabs:pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)" },
+      "male": { "id": "elevenlabs:pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)", "avatar_url": "https://pub.r2.dev/voice-avatars/pNInz6obpgDQGcFmaJgB.jpeg" },
       "pool": { ... }
     }
   },

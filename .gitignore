@@ -41,6 +41,7 @@ venv.bak/
 .DS_Store
 
 # Audio/Temp Files
+avatars/
 *.mp3
 *.wav
 *.srt
