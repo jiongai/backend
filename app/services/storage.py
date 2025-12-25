@@ -108,6 +108,11 @@ class R2Storage:
             else:
                  raise ValueError("Invalid URL format: Could not extract object key")
 
+        # Optimization: If already in 'saved', return immediately
+        if "/saved/" in source_key:
+             print(f"⏩ File already saved, returning canonical URL")
+             return f"{clean_domain}/{source_key}"
+
         # 2. Extract Project ID and Extension
         # Key format assumption: projects/{project_id}/{subfolder}/{filename}
         # OR projects/{project_id}/{filename} (legacy)

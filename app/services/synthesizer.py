@@ -128,7 +128,7 @@ async def synthesize_drama(
     # Generate IDs
     # In a real app, project_id might come from the request. 
     # For now, we put everything in a 'demos' folder or similar.
-    project_id = os.getenv("R2_PROJECT_ID", "Demos") # Updated to use Env Var
+    project_id = os.getenv("R2_PROJECT_ID", "Railway") # Updated to use Env Var
     chapter_id = str(uuid4())
     
     try:
