@@ -463,7 +463,7 @@ class TTSManager:
         # Default fallback
         return "google"
 
-    def assign_voices_to_script(self, script: list, user_tier: str = "free") -> list:
+    def assign_voices_to_script(self, script: list, user_tier: str = "free", allowed_languages: list = None) -> list:
         """
         Enrich the script by pre-calculating and assigning voices and providers.
         This allows the frontend to see and edit the voice assignments.
@@ -479,6 +479,14 @@ class TTSManager:
             import re
             is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
             lang_key = "zh" if is_chinese else "en"
+            
+            # Filter Logic: Restrict to allowed_languages if provided
+            if allowed_languages and lang_key not in allowed_languages:
+                # Force assignment to an allowed language
+                if "en" in allowed_languages:
+                    lang_key = "en"
+                elif allowed_languages:
+                    lang_key = allowed_languages[0] # Fallback to first allowed
             
             # Check for Manual Voice Override
             manual_voice = segment.get("voice_id")

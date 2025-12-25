@@ -214,6 +214,7 @@ async def health_check():
 @app.post("/assign_voices", response_model=Dict[str, Any], dependencies=[Depends(verify_secret_key)])
 async def assign_voices(
     request: SynthesizeRequest,
+    languages: Optional[List[str]] = Query(None),
     user_tier: str = Header("free", alias="X-User-Tier")
 ):
     """
@@ -221,11 +222,32 @@ async def assign_voices(
     Useful for frontend 'Magic Fill' or pre-synthesis configuration.
     """
     try:
-        logger.info("Assign voices request received", user_tier=user_tier)
+        logger.info("Assign voices request received", user_tier=user_tier, languages=languages)
         logger.info("Assign voices parameters", script=request.script)
 
+        # Normalize languages
+        normalized_langs = None
+        if languages:
+            normalized_langs = []
+            for l in languages:
+                l_lower = l.lower()
+                if l_lower in ["cn", "zh-cn", "zh-tw"]:
+                    normalized_langs.append("zh")
+                elif l_lower.startswith("en"):
+                    normalized_langs.append("en")
+                else:
+                    normalized_langs.append(l_lower)
+            normalized_langs = list(set(normalized_langs)) # Dedup
+        else:
+            # Default to English if no language filter provided
+            normalized_langs = ["en"]
+
         # Auto-assign voices
-        enriched_script = tts_manager.assign_voices_to_script(request.script, user_tier=user_tier)
+        enriched_script = tts_manager.assign_voices_to_script(
+            request.script, 
+            user_tier=user_tier,
+            allowed_languages=normalized_langs
+        )
         
         response_data = {
             "message": "Voices assigned successfully",

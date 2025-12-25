@@ -43,6 +43,7 @@
 为剧本中的角色分配声音 ID (Voice ID)。前端在生成/编辑完剧本后，调用此接口获取系统的声音分配建议。
 
 - **URL**: `/assign_voices`
+- **Query Param**: `languages` (Optional) - 限制角色声音分配的语言范围（如 ?languages=en）。不填默认为 `en`。
 - **Body**: JSON (SynthesizeRequest)
 
 #### 请求参数 (Body)
