@@ -51,14 +51,15 @@ else:
     logger.info("Running locally or on Railway, using system ffmpeg")
 # ========================================
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header, Query, Depends, Security
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, field_validator, Field
 from dotenv import load_dotenv
 
 # Load environment variables FIRST
-load_dotenv()
+load_dotenv(override=True)
 
 from app.services.synthesizer import synthesize_drama
 from app.services.audio_engine import (
@@ -95,6 +96,31 @@ app.add_middleware(
 
 # Add Request ID Middleware
 app.add_middleware(CorrelationIdMiddleware)
+
+# ========================================
+# Security Dependency
+# ========================================
+api_key_header = APIKeyHeader(name="X-Access-Secret", auto_error=False)
+
+async def verify_secret_key(header_secret: str = Security(api_key_header)):
+    """
+    Verify the access secret provided in headers.
+    """
+    correct_secret = os.getenv("API_ACCESS_SECRET")
+    
+    # If no secret is set in env, allow open access (or default to secure, depending on policy)
+    # Here we allow open access if variable is missing to prevent breaking local setups immediately
+    # unless user explicitly sets it.
+    if not correct_secret:
+        return header_secret
+        
+    if header_secret != correct_secret:
+        raise HTTPException(
+            status_code=403,
+            detail="Access Denied: Invalid Security Key"
+        )
+    return header_secret
+
 
 
 # Request Models
@@ -185,7 +211,7 @@ async def health_check():
     }
 
 
-@app.post("/assign_voices", response_model=Dict[str, Any])
+@app.post("/assign_voices", response_model=Dict[str, Any], dependencies=[Depends(verify_secret_key)])
 async def assign_voices(
     request: SynthesizeRequest,
     user_tier: str = Header("free", alias="X-User-Tier")
@@ -217,7 +243,7 @@ async def assign_voices(
 
 
 
-@app.post("/synthesize", response_model=DramaResponse)
+@app.post("/synthesize", response_model=DramaResponse, dependencies=[Depends(verify_secret_key)])
 async def synthesize_audio_drama(
     request: SynthesizeRequest,
     background_tasks: BackgroundTasks,
@@ -287,7 +313,7 @@ async def synthesize_audio_drama(
 
 
 
-@app.post("/review", response_class=FileResponse)
+@app.post("/review", response_class=FileResponse, dependencies=[Depends(verify_secret_key)])
 async def review_voice(
     request: ReviewRequest,
     background_tasks: BackgroundTasks,
@@ -360,7 +386,7 @@ async def review_voice(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/save_files", response_model=Dict[str, str])
+@app.post("/save_files", response_model=Dict[str, str], dependencies=[Depends(verify_secret_key)])
 async def save_files(request: SaveFilesRequest):
     """
     Save generated files (from temp or saved) as NEW standalone copies.
@@ -391,7 +417,7 @@ async def save_files(request: SaveFilesRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/del_files")
+@app.post("/del_files", dependencies=[Depends(verify_secret_key)])
 async def delete_files(request: DeleteFilesRequest):
     """
     Delete audio and/or SRT files from storage.
@@ -416,7 +442,7 @@ async def delete_files(request: DeleteFilesRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/move_files_to_temp", response_model=Dict[str, str])
+@app.post("/move_files_to_temp", response_model=Dict[str, str], dependencies=[Depends(verify_secret_key)])
 async def move_files_to_temp(request: MoveFilesToTempRequest):
     """
     Move files from 'saved' folder back to 'temp' folder.
@@ -446,17 +472,35 @@ async def move_files_to_temp(request: MoveFilesToTempRequest):
         logger.error("Move files failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/voices", response_model=dict)
-async def get_available_voices():
+@app.get("/voices", response_model=dict, dependencies=[Depends(verify_secret_key)])
+async def get_available_voices(languages: Optional[List[str]] = Query(None)):
     """
     Get configuration of available voices and settings.
+    Optional languages filter (e.g. ?languages=en&languages=zh)
     Returns:
     - voice_map: { "Basic": <Google>, "Advance": <ElevenLabs> }
     - emotion_settings: Emotion parameters
     - samples: Voice sample URLs
     """
+    # Normalize languages
+    normalized_langs = None
+    if languages:
+        normalized_langs = []
+        for l in languages:
+            l_lower = l.lower()
+            if l_lower in ["cn", "zh-cn", "zh-tw"]:
+                normalized_langs.append("zh")
+            elif l_lower.startswith("en"):
+                normalized_langs.append("en")
+            else:
+                normalized_langs.append(l_lower)
+        normalized_langs = list(set(normalized_langs)) # Dedup
+    else:
+        # Default behavior: if not filled, default is English ('en')
+        normalized_langs = ["en"]
+
     return {
-        "voice_map": get_public_voice_groups(),
+        "voice_map": get_public_voice_groups(languages=normalized_langs),
         "emotion_settings": EMOTION_SETTINGS,
         "samples": VOICE_SAMPLES
     }

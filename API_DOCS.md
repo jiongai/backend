@@ -30,6 +30,7 @@
 | `X-ElevenLabs-API-Key` | ElevenLabs API Key (付费语音合成) | `xi-...` |
 | `X-User-Tier` | 用户等级，影响路由策略 | `free` (默认) 或 `vip` |
 | `X-Request-ID` | 请求追踪 ID (可选) | `123e4567-e89b...` |
+| `X-Access-Secret` | API 访问密钥 (必填) | `your_secret_key_123` |
 
 ---
 
@@ -209,13 +210,16 @@
 获取当前系统支持的所有声音配置及情感参数。前端可用此数据构建声音选择器。
 
 - **URL**: `/voices`
+- **Query Param**: `languages` (Optional)
+    - 说明: 语言代码列表。不填默认返回英语 (`en`)。
+    - 示例: `/voices?languages=en&languages=cn` (同时获取英语和中文)
 - **响应**: JSON
 
 #### 响应结构 (JSON)
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
-| `voice_map` | object | 包含声音配置，分为 `Basic` (Google) 和 `Advance` (ElevenLabs) 两组。 |
+| `voice_map` | object | 包含声音配置，分为 `Basic` (Google) 和 `Advance` (ElevenLabs) 两组。<br>若指定语言，只返回对应语言的声音。 |
 
 
 | `emotion_settings` | object | 不同情感对应的语音参数 (稳定性, 相似度等) |

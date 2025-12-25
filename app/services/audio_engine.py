@@ -95,13 +95,42 @@ def get_enriched_voice_map() -> Dict:
         
     return enriched_map
 
-def get_public_voice_groups() -> Dict:
+def get_public_voice_groups(languages: list = None) -> Dict:
     """
     Get the structured public voice groups (Basic/Advance).
     Deduplicates voices that appear in both 'defaults' and 'pool'.
+    
+    Args:
+        languages: List of language codes to filter by (e.g. ["en", "zh"]). 
+                  If None, returns all (or default behavior).
+                  The caller handles default fallback.
     """
     full_map = get_enriched_voice_map()
     
+    # Filter function for Google (Basic)
+    def filter_basic(basic_map, langs):
+        if not basic_map:
+            return {}
+        if not langs:
+            return basic_map
+            
+        filtered = {}
+        # 1. Filter top-level defaults
+        for lang in langs:
+             if lang in basic_map:
+                 filtered[lang] = basic_map[lang]
+        
+        # 2. Filter pool
+        if "pool" in basic_map:
+            pool_filtered = {}
+            for lang in langs:
+                if lang in basic_map["pool"]:
+                    pool_filtered[lang] = basic_map["pool"][lang]
+            if pool_filtered:
+                filtered["pool"] = pool_filtered
+                
+        return filtered
+
     # Deduplicate Google Listing
     if "google" in full_map and "pool" in full_map["google"]:
         g_defaults = full_map["google"]
@@ -135,9 +164,25 @@ def get_public_voice_groups() -> Dict:
                 if gender in el_pool:
                      el_pool[gender] = [v for v in el_pool[gender] if v["id"] != target_id]
 
+    # Apply Code Filtering
+    basic_voices = full_map.get("google")
+    advance_voices = full_map.get("elevenlabs")
+    
+    if languages:
+        basic_voices = filter_basic(basic_voices, languages)
+        
+        # For Advance (ElevenLabs), since they are not language-keyed in config,
+        # we treat them as compatible with EN and ZH.
+        # If the user requests ONLY 'jp', we exclude them to follow "if we don't have it return empty" rule
+        # (assuming we don't officially claim JP support in this system yet).
+        supported_advance = {"en", "zh"}
+        # If any requested language is in supported_advance, include Advance voices
+        if not any(l in supported_advance for l in languages):
+            advance_voices = {}
+
     return {
-        "Basic": full_map.get("google"),
-        "Advance": full_map.get("elevenlabs")
+        "Basic": basic_voices,
+        "Advance": advance_voices
     }
 
 
