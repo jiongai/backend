@@ -106,7 +106,7 @@ async def verify_secret_key(header_secret: str = Security(api_key_header)):
     """
     Verify the access secret provided in headers.
     """
-    correct_secret = os.getenv("API_ACCESS_SECRET")
+    correct_secret = os.getenv("DARMAFLOW_API_ACCESS_SECRET")
     
     # If no secret is set in env, allow open access (or default to secure, depending on policy)
     # Here we allow open access if variable is missing to prevent breaking local setups immediately
