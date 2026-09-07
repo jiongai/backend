@@ -1,160 +1,91 @@
-# 🎤 可用声音配置
+# 🎤 DramaFlow 音色与情感配置指南
 
-## 当前配置
-
-### 旁白 (Narration) - Edge TTS (免费)
-| 性别 | 声音名称 | Voice ID | 特点 |
-|------|----------|----------|------|
-| 男性 | Brian | `en-US-BrianNeural` | 专业、深沉、适合叙事 |
-| 女性 | Sonia | `en-GB-SoniaNeural` | 英式口音、优雅、温暖 |
-
-### 对话 (Dialogue) - ElevenLabs (付费)
-| 性别 | 声音名称 | Voice ID | 特点 |
-|------|----------|----------|------|
-| 男性 | Adam | `pNInz6obpgDQGcFmaJgB` | 深沉、成熟、磁性 |
-| 女性 | Rachel | `21m00Tcm4TlvDq8ikWAM` | 温暖、友好、清晰 |
+DramaFlow 采用分级多云混合 TTS 架构（Hybrid Routing Strategy），支持从高性价比的标准音色到高拟真、富有表现力的电影级音色。
 
 ---
 
-## 更多 ElevenLabs 声音选项
+## 1. 声音分级与供应商架构
 
-如果想更换声音，可以从以下选项中选择：
-
-### 男性声音
-
-| 名称 | Voice ID | 特点 |
-|------|----------|------|
-| **Adam** ⭐ | `pNInz6obpgDQGcFmaJgB` | 深沉、成熟（当前使用）|
-| Antoni | `ErXwobaYiN019PkySvjV` | 年轻、充满活力 |
-| Arnold | `VR6AewLTigWG4xSOukaG` | 强壮、权威 |
-| Callum | `N2lVS1w4EtoT3dr4eOWO` | 平静、专业 |
-| Charlie | `IKne3meq5aSn9XLyUdCD` | 友好、随和 |
-| Clyde | `2EiwWnXFnvU5JabPnv8n` | 中年、温暖 |
-| Dave | `CYw3kZ02Hs0563khs1Fj` | 年轻、英式 |
-| Fin | `D38z5RcWu1voky8WS1ja` | 爱尔兰口音 |
-| George | `JBFqnCBsd6RMkjVDRZzb` | 英式、正式 |
-| Josh | `TxGEqnHWrfWFTfGW9XjX` | 专业、新闻播音 |
-| Patrick | `ODq5zmih8GrVes37Dizd` | 严肃、权威 |
-| Sam | `yoZ06aMxZJJ28mfd3POQ` | 年轻、活泼 |
-| Thomas | `GBv7mTt0atIp3Br8iCZE` | 温和、平静 |
-
-### 女性声音
-
-| 名称 | Voice ID | 特点 |
-|------|----------|------|
-| **Rachel** ⭐ | `21m00Tcm4TlvDq8ikWAM` | 温暖、友好（当前使用）|
-| Bella | `EXAVITQu4vr4xnSDxMaL` | 柔和、叙事风格 |
-| Charlotte | `XB0fDUnXU5powFXDhCwa` | 英式、优雅 |
-| Domi | `AZnzlk1XvdvUeBnXmlld` | 自信、活力 |
-| Dorothy | `ThT5KcBeYPX3keUQqHPh` | 年长、智慧 |
-| Elli | `MF3mGyEYCl7XYWbV9V6O` | 年轻、活泼 |
-| Emily | `LcfcDJNUP1GQjkzn1xUU` | 温柔、平静 |
-| Freya | `jsCqWAovK2LkecY7zXl4` | 年轻、美式 |
-| Gigi | `jBpfuIE2acCO8z3wKNLl` | 活泼、热情 |
-| Glinda | `z9fAnlkpzviPz146aGWa` | 女巫般、神秘 |
-| Grace | `oWAxZDx7w5VEj9dCyTzz` | 南方口音、温暖 |
-| Jessica | `cgSgspJ2msm6clMCkdW9` | 专业、清晰 |
-| Lily | `pFZP5JQG7iQjIQuC4Bku` | 英式、年轻 |
-| Matilda | `XrExE9yKIg1WjnnlVkGX` | 温暖、叙事 |
-| Nicole | `piTKgcLEGmPE4e6mEKli` | 活力、美式 |
-| Sarah | `EXAVITQu4vr4xnSDxMaL` | 专业、新闻 |
+| 梯队 | 适用群体 | 供应商 | 典型场景 | 特性 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Basic (标准)** | 免费用户 / 标准角色 | **Google Cloud TTS** & **Azure Speech** | 旁白、大体量配角对白 | 成本极低、延迟极低、发音清晰标准，支持 Neural2 与 Wavenet 深度神经网络 |
+| **Advance (高级)** | VIP 用户 / 核心主角 | **ElevenLabs** & **OpenAI TTS** | 核心男女主角深度对白、重要情绪高潮段落 | 声音自然生动、极具戏剧感染力，支持细粒度情绪（Stability/Style）注入 |
 
 ---
 
-## 🔧 如何更换声音
+## 2. 默认音色对照表
 
-### 方法 1: 修改配置文件
+### 旁白 (Narration)
+系统会在合成前自动检测文本语种，锁定统一旁白音色，保证全剧声音连贯：
 
-编辑 `app/services/audio_engine.py`：
+| 语种 | 默认发音人 | 供应商 | Voice ID | 音色特点 |
+| :--- | :--- | :--- | :--- | :--- |
+| **中文** | 云希 (故事) | Azure / Google | `azure:zh-CN-YunxiNeural` | 沉稳大气、富有叙事张力，专业有声书演播质感 |
+| **英文** | Brian (Narrator) | Azure / Google | `azure:en-US-BrianNeural` | 磁性英朗、纯正叙事腔调 |
+| **VIP 旁白** | Onyx / Alloy | OpenAI | `openai:onyx` / `openai:alloy` | 现代播客级质感、声音细腻温润 |
 
-```python
-DIALOGUE_VOICES = {
-    "male": "TxGEqnHWrfWFTfGW9XjX",    # Josh - 专业播音
-    "female": "MF3mGyEYCl7XYWbV9V6O"   # Elli - 年轻活泼
+### 对白角色 (Dialogue)
+
+#### Basic (Google Cloud TTS)
+- **中文发音人池**：
+  - 女声：`cmn-CN-Wavenet-A` (小燕 - 甜美), `cmn-CN-Wavenet-D` (晓晓 - 亲切), `cmn-TW-Wavenet-A` (台湾女声)
+  - 男声：`cmn-CN-Wavenet-C` (云希 - 故事), `cmn-CN-Wavenet-B` (云扬 - 播音), `cmn-TW-Wavenet-B/C` (台湾男声)
+- **英文发音人池**：
+  - 女声：`en-US-Neural2-F` (Jennifer - 温暖), `en-US-Neural2-C` (Sarah - 明亮), `en-US-Neural2-E` (Emily - 柔和), `en-GB-Neural2-A` (英音女声) 等
+  - 男声：`en-US-Neural2-J` (Michael - 活力), `en-US-Neural2-A` (Steven - 经典), `en-US-Neural2-D` (Robert - 深沉), `en-GB-Neural2-B` (英音男声) 等
+
+#### Advance (ElevenLabs 精选库)
+- **男声精选**：
+  - `pNInz6obpgDQGcFmaJgB`：**Adam (Deep)** - 成熟低沉、磁性霸道
+  - `ErXwobaYiN019PkySvjV`：**Antoni (Young)** - 阳光少年、富有活力
+  - `VR6AewLTigWG4xSOukaG`：**Arnold (Strong)** - 强壮威严、战士首领
+  - `N2lVS1w4EtoT3dr4eOWO`：**Callum (Calm)** - 儒雅平静、专业内敛
+  - `yoZ06aMxZJJ28mfd3POQ`：**Sam (Lively)** - 机灵敏捷、幽默风趣
+- **女声精选**：
+  - `21m00Tcm4TlvDq8ikWAM`：**Rachel (Warm)** - 温暖治愈、知性从容
+  - `MF3mGyEYCl7XYWbV9V6O`：**Elli (Lively)** - 活泼俏皮、元气少女
+  - `EXAVITQu4vr4xnSDxMaL`：**Bella (Soft)** - 柔弱温婉、邻家女孩
+  - `XB0fDUnXU5powFXDhCwa`：**Charlotte (Elegant)** - 优雅贵气、高岭之花
+  - `ThT5KcBeYPX3keUQqHPh`：**Dorothy (Wise)** - 慈祥睿智、长者智囊
+
+---
+
+## 3. 情绪参数矩阵 (Emotion Settings)
+
+针对 ElevenLabs，系统内建了 8 种戏剧化情感调节参数，在合成时自动注入发音引擎：
+
+| 情感分类 | Stability (稳定性) | Similarity Boost (相似度提升) | Style (风格化夸张度) | 适用戏剧场景 |
+| :--- | :--- | :--- | :--- | :--- |
+| `neutral` | 0.60 | 0.75 | 0.0 | 日常叙事、平稳交谈 |
+| `happy` | 0.45 | 0.80 | 0.3 | 喜悦、兴奋、庆贺 |
+| `sad` | 0.40 | 0.70 | 0.2 | 悲伤、低落、抽泣 |
+| `angry` | 0.30 | 0.80 | 0.6 | 愤怒、争吵、怒斥 |
+| `fearful` | 0.30 | 0.65 | 0.5 | 恐惧、战栗、惊恐 |
+| `surprised`| 0.35 | 0.75 | 0.4 | 诧异、不可置信 |
+| `whispering`| 0.50 | 0.50 | 0.0 | 窃窃私语、密谋、耳语 |
+| `shouting` | 0.25 | 0.80 | 0.7 | 呐喊、呼救、战场咆哮 |
+
+---
+
+## 4. 如何配置与扩展新音色
+
+> [!IMPORTANT]
+> **切勿修改代码中的硬编码！** 全部音色池、发音人映射和情绪参数均统一收口在 [`app/config/voices.json`](file:///Users/baojiong/My%20Projects/AIAudioDrarm/DramaFlow/app/config/voices.json)。
+
+### 步骤一：在 `voices.json` 中登记
+1. 在 `VOICE_MAP` 中将新 Voice ID 追加至对应的供应商音色池（如 `elevenlabs.pool.male` 或 `google.pool.zh.female`）。
+2. 在 `VOICE_LABELS` 中添加展示名称映射，例如：
+   ```json
+   "VOICE_LABELS": {
+       "my-custom-voice-id": "发音人名称 (性格特征)"
+   }
+   ```
+
+### 步骤二：绑定头像（可选）
+在 [`app/config/avatar_map.json`](file:///Users/baojiong/My%20Projects/AIAudioDrarm/DramaFlow/app/config/avatar_map.json) 中为新 Voice ID 绑定展示头像的 CDN URL，前端在调用 `/voices` 时将自动附带该头像链接：
+```json
+{
+  "my-custom-voice-id": "r2.yourdomain.com/voice-avatars/my-custom-voice-id.png"
 }
 ```
-
-保存后重启服务器：
-```bash
-# Ctrl+C 停止
-./run.sh
-```
-
-### 方法 2: 添加更多声音选项
-
-如果想支持更多角色，可以扩展配置：
-
-```python
-DIALOGUE_VOICES = {
-    "male": "pNInz6obpgDQGcFmaJgB",    # Adam - 默认男声
-    "female": "21m00Tcm4TlvDq8ikWAM",  # Rachel - 默认女声
-    "young_male": "ErXwobaYiN019PkySvjV",   # Antoni - 年轻男性
-    "young_female": "MF3mGyEYCl7XYWbV9V6O",  # Elli - 年轻女性
-    "old_male": "GBv7mTt0atIp3Br8iCZE",      # Thomas - 年长男性
-    "old_female": "ThT5KcBeYPX3keUQqHPh"     # Dorothy - 年长女性
-}
-```
-
----
-
-## 🧪 测试不同声音
-
-想试听某个声音？使用这个命令：
-
-```bash
-# 替换 VOICE_ID 为上表中的任意 voice_id
-curl -X POST https://api.elevenlabs.io/v1/text-to-speech/VOICE_ID \
-  -H "xi-api-key: $(grep ELEVENLABS_API_KEY .env | cut -d= -f2)" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello, this is a test of this voice.","model_id":"eleven_monolingual_v1"}' \
-  --output test_voice.mp3 && open test_voice.mp3
-```
-
-例如，测试 Josh 的声音：
-```bash
-curl -X POST https://api.elevenlabs.io/v1/text-to-speech/TxGEqnHWrfWFTfGW9XjX \
-  -H "xi-api-key: $(grep ELEVENLABS_API_KEY .env | cut -d= -f2)" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello, I am Josh. This is how I sound.","model_id":"eleven_monolingual_v1"}' \
-  --output josh_test.mp3 && open josh_test.mp3
-```
-
----
-
-## 📋 获取最新声音列表
-
-ElevenLabs 不断添加新声音。获取完整列表：
-
-```bash
-curl -X GET https://api.elevenlabs.io/v1/voices \
-  -H "xi-api-key: $(grep ELEVENLABS_API_KEY .env | cut -d= -f2)" | \
-  python -m json.tool | grep -A 2 '"name":'
-```
-
----
-
-## 💡 声音选择建议
-
-### 小说转音频剧
-- **旁白**: Brian (深沉、专业)
-- **主角男性**: Adam (磁性、成熟)
-- **主角女性**: Rachel (温暖、友好)
-- **配角年轻**: Antoni / Elli
-- **配角年长**: Thomas / Dorothy
-
-### 新闻播报
-- **男主播**: Josh
-- **女主播**: Jessica
-
-### 儿童故事
-- **女声**: Elli (活泼)
-- **男声**: Charlie (友好)
-
-### 恐怖/悬疑
-- **旁白**: Clyde (深沉)
-- **神秘角色**: Glinda (神秘)
-
----
-
-*选择合适的声音可以大大提升音频剧的质量！*
-
+修改完成后，重启或热重载服务即可全量生效。

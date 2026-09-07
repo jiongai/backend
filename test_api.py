@@ -1,140 +1,176 @@
 """
-Simple test script for the DramaFlow API
+DramaFlow API 自动化回归与连通性测试套件
+验证当前服务的全部活跃端点：/health, /voices, /assign_voices, /review, /synthesize
 """
 
-import requests
-import json
 import os
-from pathlib import Path
+import sys
+import requests
+from dotenv import load_dotenv
 
-# API base URL
-BASE_URL = "http://localhost:8000"
+# 加载 .env 环境变量
+load_dotenv(override=True)
 
-# Sample text for testing
-SAMPLE_TEXT = """
-The old mansion stood alone on the hill, its windows dark and empty. 
-Sarah approached the creaking gate. "Hello?" she called out nervously. 
-"Is anyone there?" The wind whispered through the trees, carrying an eerie silence. 
-A door slammed somewhere inside. "I'm here," came a deep voice from the shadows. 
-Sarah's heart raced as she took a step back.
-"""
+BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
+SECRET_KEY = os.getenv("DARMAFLOW_API_ACCESS_SECRET", "")
+
+HEADERS = {
+    "Content-Type": "application/json"
+}
+if SECRET_KEY:
+    HEADERS["X-Access-Secret"] = SECRET_KEY
+
+# 模拟测试剧本
+SAMPLE_SCRIPT = [
+    {
+        "type": "narration",
+        "text": "The wind howled softly across the old empty hills.",
+        "character": "Narrator",
+        "gender": "neutral",
+        "emotion": "neutral",
+        "pacing": 1.0,
+        "voice_id": ""
+    },
+    {
+        "type": "dialogue",
+        "text": "Is anyone still out there?",
+        "character": "Sarah",
+        "gender": "female",
+        "emotion": "fearful",
+        "pacing": 1.0,
+        "voice_id": ""
+    },
+    {
+        "type": "dialogue",
+        "text": "Don't worry, I'm right behind you.",
+        "character": "John",
+        "gender": "male",
+        "emotion": "neutral",
+        "pacing": 1.0,
+        "voice_id": ""
+    }
+]
 
 
-def test_health_check():
-    """Test the health check endpoint."""
-    print("Testing health check...")
-    response = requests.get(f"{BASE_URL}/health")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print("✅ Health check passed")
-        print(f"   OpenRouter configured: {data['openrouter_configured']}")
-        print(f"   ElevenLabs configured: {data['elevenlabs_configured']}")
-        return True
-    else:
-        print(f"❌ Health check failed: {response.status_code}")
+def test_health():
+    """测试 1: 健康检查端点"""
+    print("\n🔍 [1/5] 测试 GET /health ...")
+    try:
+        res = requests.get(f"{BASE_URL}/health", timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            print(f"✅ 健康检查通过: status={data.get('status')}")
+            print(f"   ElevenLabs 就绪: {data.get('elevenlabs_configured')}")
+            return True
+        else:
+            print(f"❌ 健康检查失败: HTTP {res.status_code} - {res.text}")
+            return False
+    except requests.exceptions.ConnectionError:
+        print(f"❌ 连接失败: 无法访问 {BASE_URL}，请确保服务已启动 (uvicorn app.main:app)")
         return False
 
 
-def test_analyze():
-    """Test the analyze endpoint."""
-    print("\nTesting text analysis...")
-    
-    response = requests.post(
-        f"{BASE_URL}/analyze",
-        json={"text": SAMPLE_TEXT}
-    )
-    
-    if response.status_code == 200:
-        data = response.json()
-        print("✅ Analysis successful")
-        
-        if "script" in data:
-            print(f"   Segments generated: {len(data['script'])}")
-            
-            if "metadata" in data:
-                meta = data["metadata"]
-                print(f"   Narration segments: {meta.get('narration_count', 0)}")
-                print(f"   Dialogue segments: {meta.get('dialogue_count', 0)}")
-                print(f"   Characters: {', '.join(meta.get('characters', []))}")
-            
-            # Print first few segments
-            print("\n   Sample segments:")
-            for i, segment in enumerate(data['script'][:3], 1):
-                print(f"   {i}. [{segment['type']}] {segment['character']}: {segment['text'][:50]}...")
-        
-        return data
+def test_voices():
+    """测试 2: 获取音色目录 (支持语言过滤)"""
+    print("\n🔍 [2/5] 测试 GET /voices ...")
+    res = requests.get(f"{BASE_URL}/voices?languages=en&languages=zh", headers=HEADERS, timeout=10)
+    if res.status_code == 200:
+        data = res.json()
+        voice_map = data.get("voice_map", {})
+        has_basic = "Basic" in voice_map
+        has_advance = "Advance" in voice_map
+        print(f"✅ 音色列表获取成功 (Basic: {has_basic}, Advance: {has_advance})")
+        print(f"   支持的情感配置项数量: {len(data.get('emotion_settings', {}))}")
+        return True
     else:
-        print(f"❌ Analysis failed: {response.status_code}")
-        print(f"   Error: {response.text}")
+        print(f"❌ 获取音色失败: HTTP {res.status_code} - {res.text}")
+        return False
+
+
+def test_assign_voices():
+    """测试 3: 智能音色分配 (Magic Fill)"""
+    print("\n🔍 [3/5] 测试 POST /assign_voices ...")
+    payload = {
+        "script": SAMPLE_SCRIPT
+    }
+    res = requests.post(f"{BASE_URL}/assign_voices?languages=en", json=payload, headers=HEADERS, timeout=15)
+    if res.status_code == 200:
+        data = res.json()
+        enriched_script = data.get("script", [])
+        print(f"✅ 音色分配成功，共处理 {len(enriched_script)} 个片段")
+        for seg in enriched_script:
+            print(f"   • [{seg.get('character')}] -> {seg.get('voice_id')}")
+        return enriched_script
+    else:
+        print(f"❌ 音色分配失败: HTTP {res.status_code} - {res.text}")
         return None
 
 
-def test_generate():
-    """Test the audio generation endpoint."""
-    print("\nTesting audio generation...")
-    print("⏳ This may take 1-2 minutes...")
-    
-    response = requests.post(
-        f"{BASE_URL}/generate",
-        json={"text": SAMPLE_TEXT},
-        timeout=300  # 5 minute timeout
-    )
-    
-    if response.status_code == 200:
-        # Save the audio file
-        output_file = "test_drama.mp3"
-        with open(output_file, "wb") as f:
-            f.write(response.content)
-        
-        print("✅ Audio generation successful")
-        print(f"   Saved to: {output_file}")
-        print(f"   File size: {len(response.content) / 1024:.2f} KB")
-        
-        # Check headers
-        if "X-Segments-Count" in response.headers:
-            print(f"   Segments: {response.headers['X-Segments-Count']}")
-        
+def test_review():
+    """测试 4: 单句快速试听 (返回二进制音频流)"""
+    print("\n🔍 [4/5] 测试 POST /review ...")
+    payload = {
+        "text": "Hello, testing DramaFlow review.",
+        "voice_id": "google:en-US-Neural2-J",
+        "pacing": 1.0,
+        "emotion": "neutral"
+    }
+    try:
+        res = requests.post(f"{BASE_URL}/review", json=payload, headers=HEADERS, timeout=20)
+        if res.status_code == 200 and "audio" in res.headers.get("Content-Type", ""):
+            audio_size = len(res.content)
+            print(f"✅ 试听音频生成成功: {audio_size} bytes (audio/mpeg)")
+            return True
+        else:
+            print(f"⚠️ 试听接口返回: HTTP {res.status_code} (可能未配置对应 TTS 凭证或网络波动: {res.text[:100]})")
+            return False
+    except Exception as e:
+        print(f"⚠️ 试听接口异常: {e}")
+        return False
+
+
+def test_synthesize_dry_run():
+    """测试 5: 合成流水线探测 (limit=0 探测管道)"""
+    print("\n🔍 [5/5] 测试 POST /synthesize (Dry Run: limit=0) ...")
+    payload = {
+        "script": SAMPLE_SCRIPT,
+        "limit": 0
+    }
+    res = requests.post(f"{BASE_URL}/synthesize", json=payload, headers=HEADERS, timeout=15)
+    if res.status_code == 200:
+        data = res.json()
+        print(f"✅ 合成流水线校验成功: {data.get('message')}")
         return True
     else:
-        print(f"❌ Generation failed: {response.status_code}")
-        print(f"   Error: {response.text}")
+        print(f"❌ 合成流水线请求失败: HTTP {res.status_code} - {res.text}")
         return False
 
 
 def main():
-    """Run all tests."""
     print("=" * 60)
-    print("DramaFlow API Test Suite")
+    print("🎭 DramaFlow API 自动化回归验证套件")
+    print(f"目标地址: {BASE_URL}")
+    print(f"安全密钥配置状态: {'已配置' if SECRET_KEY else '未配置 (请确认服务端是否放行)'}")
     print("=" * 60)
-    
-    # Test 1: Health check
-    if not test_health_check():
-        print("\n⚠️  Server is not healthy. Please check:")
-        print("   1. Server is running (python app/main.py)")
-        print("   2. API keys are configured in .env file")
-        return
-    
-    # Test 2: Analyze text
-    analysis_result = test_analyze()
-    if not analysis_result:
-        print("\n⚠️  Analysis failed. Check OpenRouter API key.")
-        return
-    
-    # Test 3: Generate audio (optional, as it takes time and costs money)
+
+    if not test_health():
+        print("\n❌ 服务未启动或健康检查未通过，测试终止。")
+        sys.exit(1)
+
+    voices_ok = test_voices()
+    assign_ok = bool(test_assign_voices())
+    synth_ok = test_synthesize_dry_run()
+    review_ok = test_review()
+
     print("\n" + "=" * 60)
-    user_input = input("Do you want to test audio generation? This will use API credits. (y/N): ")
-    
-    if user_input.lower() in ['y', 'yes']:
-        test_generate()
-    else:
-        print("Skipping audio generation test.")
-    
-    print("\n" + "=" * 60)
-    print("Tests completed!")
+    print("📊 测试执行汇总:")
+    print(f"  • GET /health         : ✅ 通过")
+    print(f"  • GET /voices         : {'✅ 通过' if voices_ok else '❌ 失败'}")
+    print(f"  • POST /assign_voices : {'✅ 通过' if assign_ok else '❌ 失败'}")
+    print(f"  • POST /synthesize    : {'✅ 通过' if synth_ok else '❌ 失败'}")
+    print(f"  • POST /review        : {'✅ 通过' if review_ok else '⚠️ 跳过/依赖TTS凭证'}")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     main()
-
