@@ -4,6 +4,7 @@ Main FastAPI application
 """
 
 import os
+import secrets
 import shutil
 import asyncio
 import tempfile
@@ -11,10 +12,15 @@ import zipfile
 import json
 from pathlib import Path
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
 import structlog
-from asgi_correlation_id import CorrelationIdMiddleware
+from asgi_correlation_id import CorrelationIdMiddleware, correlation_id
 from app.core.logging import configure_logging
+from dotenv import load_dotenv
+
+# Load local defaults before provider singletons are initialized without
+# overriding deployment-managed environment variables.
+load_dotenv(override=False)
 
 # Configure logging immediately
 configure_logging()
@@ -46,7 +52,7 @@ if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
         AudioSegment.ffprobe = ffmpeg_path
         logger.info("Configured AudioSegment")
     else:
-        logger.warn("ffmpeg not found in vendor directory")
+        logger.warning("ffmpeg not found in vendor directory")
 else:
     logger.info("Running locally or on Railway, using system ffmpeg")
 # ========================================
@@ -56,11 +62,6 @@ from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from dotenv import load_dotenv
-
-# Load environment variables FIRST
-load_dotenv(override=True)
-
 from app.services.synthesizer import synthesize_drama
 from app.services.audio_engine import (
     generate_cast_metadata,
@@ -86,10 +87,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
+def get_cors_origins() -> List[str]:
+    """Return an explicit CORS allowlist; production defaults to no CORS."""
+    configured = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if configured.strip():
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    if environment in {"production", "prod"}:
+        return []
+    return ["http://localhost:3000", "http://localhost:5173"]
+
+
 # Setup CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,15 +114,22 @@ app.add_middleware(CorrelationIdMiddleware)
 # Global Exception Handler for Unhandled Errors
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = correlation_id.get()
     logger.exception(
         "Unhandled server exception",
         path=request.url.path,
         method=request.method,
-        error=str(exc)
+        error_type=type(exc).__name__,
     )
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal Server Error: {str(exc)}"}
+        content={
+            "detail": {
+                "code": "internal_server_error",
+                "message": "An unexpected server error occurred",
+                "request_id": request_id,
+            }
+        }
     )
 
 # ========================================
@@ -117,24 +137,53 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # ========================================
 api_key_header = APIKeyHeader(name="X-Access-Secret", auto_error=False)
 
-async def verify_secret_key(header_secret: str = Security(api_key_header)):
+
+def internal_error(code: str) -> HTTPException:
+    """Build a stable 500 response without exposing provider or filesystem details."""
+    return HTTPException(
+        status_code=500,
+        detail={
+            "code": code,
+            "message": "The request could not be completed",
+            "request_id": correlation_id.get(),
+        },
+    )
+
+
+async def verify_secret_key(header_secret: Optional[str] = Security(api_key_header)):
     """
     Verify the access secret provided in headers.
     """
-    correct_secret = os.getenv("DARMAFLOW_API_ACCESS_SECRET")
-    
-    # If no secret is set in env, allow open access (or default to secure, depending on policy)
-    # Here we allow open access if variable is missing to prevent breaking local setups immediately
-    # unless user explicitly sets it.
-    if not correct_secret:
-        return header_secret
-        
-    if header_secret != correct_secret:
+    correct_secret = os.getenv("DARMAFLOW_API_ACCESS_SECRET", "").strip()
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    is_production = environment in {"production", "prod"}
+    placeholder_values = {"your_api_access_secret_here", "changeme", "change-me"}
+
+    if not correct_secret or correct_secret.lower() in placeholder_values:
+        if is_production:
+            logger.error("API authentication is not configured", environment=environment)
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "authentication_not_configured"},
+            )
+        logger.warning("API authentication disabled in non-production environment")
+        return None
+
+    if not header_secret:
+        logger.warning("API request rejected: missing access secret")
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "missing_access_secret"},
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+    if not secrets.compare_digest(header_secret, correct_secret):
+        logger.warning("API request rejected: invalid access secret")
         raise HTTPException(
             status_code=403,
-            detail="Access Denied: Invalid Security Key"
+            detail={"code": "invalid_access_secret"},
         )
-    return header_secret
+    return None
 
 
 
@@ -208,9 +257,12 @@ def cleanup_temp_directory(directory: str):
     try:
         if os.path.exists(directory):
             shutil.rmtree(directory)
-            logger.info("Cleaned up temp directory", directory=directory)
+            logger.info("Cleaned up temp directory")
     except Exception as e:
-        logger.warn("Failed to cleanup temp directory", directory=directory, error=str(e))
+        logger.warning(
+            "Failed to cleanup temp directory",
+            error_type=type(e).__name__,
+        )
 
 
 # API Endpoints
@@ -241,16 +293,21 @@ async def health_check():
 async def assign_voices(
     request: SynthesizeRequest,
     languages: Optional[List[str]] = Query(None),
-    user_tier: str = Header("free", alias="X-User-Tier")
+    user_tier: Literal["free", "vip"] = Header("free", alias="X-User-Tier")
 ):
     """
     Assign voices to a script without generating audio.
     Useful for frontend 'Magic Fill' or pre-synthesis configuration.
     """
     try:
-        logger.info("Assign voices request received", user_tier=user_tier, languages=languages)
+        logger.info(
+            "Assign voices request received",
+            user_tier=user_tier,
+            languages=languages,
+            script_segments=len(request.script),
+            text_characters=sum(len(segment.text) for segment in request.script),
+        )
         script = [segment.model_dump(exclude_none=True) for segment in request.script]
-        logger.info("Assign voices parameters", script=script)
 
         # Normalize languages
         normalized_langs = None
@@ -285,14 +342,18 @@ async def assign_voices(
             }
         }
         
-        logger.info("Assign voices response", response=response_data)
+        logger.info(
+            "Voices assigned",
+            script_segments=len(enriched_script),
+            characters_count=len(response_data["metadata"]["characters"]),
+        )
         return response_data
     except ValueError as e:
         logger.warning("Voice assignment validation failed", error=str(e))
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        logger.exception("Voice assignment failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Voice assignment failed", error_type=type(e).__name__)
+        raise internal_error("voice_assignment_failed")
 
 
 
@@ -301,7 +362,7 @@ async def synthesize_audio_drama(
     request: SynthesizeRequest,
     background_tasks: BackgroundTasks,
     elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key"),
-    user_tier: str = Header("free", alias="X-User-Tier")
+    user_tier: Literal["free", "vip"] = Header("free", alias="X-User-Tier")
 ):
     """
     Synthesize audio from a provided JSON script.
@@ -379,9 +440,9 @@ async def synthesize_audio_drama(
             "Synthesize audio drama failed",
             user_tier=user_tier,
             script_segments=len(prepared_script),
-            error=str(e)
+            error_type=type(e).__name__,
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("synthesis_failed")
 
 
 
@@ -391,7 +452,7 @@ async def review_voice(
     request: ReviewRequest,
     background_tasks: BackgroundTasks,
     elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key"),
-    user_tier: str = Header("free", alias="X-User-Tier")
+    user_tier: Literal["free", "vip"] = Header("free", alias="X-User-Tier")
 ):
     """
     Generate a single audio clip for previewing a voice.
@@ -422,7 +483,12 @@ async def review_voice(
     
     
     try:
-        logger.info("Review request", text=request.text, voice=request.voice_id)
+        logger.info(
+            "Review request",
+            text_characters=len(request.text),
+            voice=request.voice_id,
+            provider=provider_name,
+        )
         # Construct a temporary segment forcing the voice
         # Truncate text to first 30 chars for preview
         truncated_text = request.text[:30]
@@ -475,10 +541,10 @@ async def review_voice(
         logger.exception(
             "Review voice generation failed",
             voice=request.voice_id,
-            text_snippet=request.text[:30] if request.text else "",
-            error=str(e)
+            provider=provider_name,
+            error_type=type(e).__name__,
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error("voice_review_failed")
 
 
 @app.post("/save_files", response_model=Dict[str, str], dependencies=[Depends(verify_secret_key)])
@@ -490,7 +556,12 @@ async def save_files(request: SaveFilesRequest):
     from app.services.storage import r2_storage
     
     try:
-        logger.info("Save files request", audio=request.audio_url, srt=request.srt_url)
+        r2_storage.validate_artifact_pair(
+            request.audio_url,
+            request.srt_url,
+            allowed_folders={"temp", "saved"},
+        )
+        logger.info("Save files request validated")
         
         # Save Audio (Copy to New UUID)
         new_audio_url = r2_storage.save_file_as_new(request.audio_url)
@@ -498,7 +569,7 @@ async def save_files(request: SaveFilesRequest):
         # Save SRT (Copy to New UUID)
         new_srt_url = r2_storage.save_file_as_new(request.srt_url)
         
-        logger.info("Files saved and isolated", audio=new_audio_url, srt=new_srt_url)
+        logger.info("Files saved and isolated")
         
         return {
             "audio_url": new_audio_url,
@@ -508,8 +579,8 @@ async def save_files(request: SaveFilesRequest):
         logger.warning("Save files validation failed", error=str(ve))
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        logger.exception("Save files failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Save files failed", error_type=type(e).__name__)
+        raise internal_error("save_files_failed")
 
 
 @app.post("/del_files", dependencies=[Depends(verify_secret_key)])
@@ -521,9 +592,29 @@ async def delete_files(request: DeleteFilesRequest):
     
     results = {}
     try:
+        if request.audio_url and request.srt_url:
+            r2_storage.validate_artifact_pair(
+                request.audio_url,
+                request.srt_url,
+                allowed_folders={"temp", "saved"},
+            )
+        elif request.audio_url:
+            r2_storage.parse_public_url(
+                request.audio_url,
+                expected_extension=".mp3",
+                allowed_folders={"temp", "saved"},
+            )
+        elif request.srt_url:
+            r2_storage.parse_public_url(
+                request.srt_url,
+                expected_extension=".srt",
+                allowed_folders={"temp", "saved"},
+            )
+        else:
+            raise ValueError("At least one artifact URL is required")
+
         if request.audio_url:
             results["audio"] = r2_storage.delete_file(request.audio_url)
-        
         if request.srt_url:
             results["srt"] = r2_storage.delete_file(request.srt_url)
             
@@ -532,9 +623,12 @@ async def delete_files(request: DeleteFilesRequest):
             "message": "Files deletion processed",
             "details": results
         }
+    except ValueError as e:
+        logger.warning("Delete files validation failed", error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("Delete files failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Delete files failed", error_type=type(e).__name__)
+        raise internal_error("delete_files_failed")
 
 
 @app.post("/move_files_to_temp", response_model=Dict[str, str], dependencies=[Depends(verify_secret_key)])
@@ -546,7 +640,12 @@ async def move_files_to_temp(request: MoveFilesToTempRequest):
     from app.services.storage import r2_storage
     
     try:
-        logger.info("Move files to temp request", audio=request.audio_url, srt=request.srt_url)
+        r2_storage.validate_artifact_pair(
+            request.audio_url,
+            request.srt_url,
+            allowed_folders={"saved"},
+        )
+        logger.info("Move files to temp request validated")
         
         # Move Audio
         new_audio_url = r2_storage.move_file_to_temp(request.audio_url)
@@ -554,7 +653,7 @@ async def move_files_to_temp(request: MoveFilesToTempRequest):
         # Move SRT
         new_srt_url = r2_storage.move_file_to_temp(request.srt_url)
         
-        logger.info("Files moved to temp", audio=new_audio_url, srt=new_srt_url)
+        logger.info("Files moved to temp")
         
         return {
             "audio_url": new_audio_url,
@@ -564,8 +663,8 @@ async def move_files_to_temp(request: MoveFilesToTempRequest):
         logger.warning("Move files validation failed", error=str(ve))
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        logger.exception("Move files failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Move files failed", error_type=type(e).__name__)
+        raise internal_error("move_files_failed")
 
 @app.get("/voices", response_model=dict, dependencies=[Depends(verify_secret_key)])
 async def get_available_voices(languages: Optional[List[str]] = Query(None)):

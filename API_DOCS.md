@@ -31,10 +31,14 @@
 
 | Header 名 | 类型 | 必填 | 说明 | 示例 |
 | :--- | :--- | :--- | :--- | :--- |
-| `X-Access-Secret` | string | 条件必填 | 后端全局安全访问密钥。当服务端环境变量配置了 `DARMAFLOW_API_ACCESS_SECRET` 时必须携带。 | `Bao32db04...` |
+| `X-Access-Secret` | string | 是（受保护接口） | 后端全局安全访问密钥。生产环境必须配置 `DARMAFLOW_API_ACCESS_SECRET`，服务端使用常量时间比较验证。 | `Bao32db04...` |
 | `X-User-Tier` | string | 否 | 用户等级。`free` (默认) 或 `vip`。直接决定 TTS 混合路由策略。 | `free` / `vip` |
 | `X-ElevenLabs-API-Key` | string | 否 | 仅当最终剧本使用 ElevenLabs 音色时需要。可覆盖服务器默认配置（按请求计费归属）。 | `xi-...` |
 | `X-Correlation-ID` | string | 否 | 请求链路追踪 ID。未提供时系统自动生成 UUID。 | `b8e4f1a2-...` |
+
+鉴权失败状态码：缺少访问密钥返回 `401`，密钥错误返回 `403`；生产环境未配置密钥或仍使用模板占位值时返回 `503 authentication_not_configured`。仅非生产开发环境允许不配置访问密钥。
+
+未捕获的服务端错误只返回稳定错误码和 `request_id`，不会向客户端返回供应商响应、凭证、堆栈或本地文件路径。
 
 ---
 
@@ -189,7 +193,9 @@
 
 将生成的音频和字幕文件转正保存：
 - **来源为 `temp`**: 执行 Copy-on-Write 分配全新独立 UUID 并删除临时源文件，移入 `saved/` 目录。
-- **来源已在 `saved`**: 复制生成新的独立快照副本（用于版本管理或另存为）。
+- **来源已在 `saved`**: 幂等返回原有规范 URL，不重复复制。
+
+所有文件生命周期接口都只接受 `R2_PUBLIC_DOMAIN` 配置域名下的规范 URL，路径必须符合 `projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}`。外部域名、协议降级、查询参数、URL 片段、编码路径、错误扩展名、跨项目或跨目录的音频/字幕组合都会在执行 R2 操作前被拒绝。
 
 - **URL**: `/save_files`
 - **Method**: `POST`

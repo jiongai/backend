@@ -61,7 +61,11 @@ async def synthesize_drama(
                 script[idx]["audio_file_path"] = path
             logger.info("Generated narration segments", count=len(narration_paths))
         except Exception as e:
-            logger.exception("Phase 1: Narration generation failed", count=len(narration_items), error=str(e))
+            logger.exception(
+                "Phase 1: Narration generation failed",
+                count=len(narration_items),
+                error_type=type(e).__name__,
+            )
             raise Exception(f"Narration generation failed: {str(e)}")
 
     # Step 2: Generate Dialogue (Phase 2)
@@ -91,7 +95,11 @@ async def synthesize_drama(
                 script[idx]["audio_file_path"] = path
             logger.info("Generated dialogue segments", count=len(dialogue_paths))
         except Exception as e:
-            logger.exception("Phase 2: Dialogue generation failed", count=len(dialogue_items), error=str(e))
+            logger.exception(
+                "Phase 2: Dialogue generation failed",
+                count=len(dialogue_items),
+                error_type=type(e).__name__,
+            )
             raise Exception(f"Dialogue generation failed: {str(e)}")
             
     # Step 3: Merge and SRT
@@ -102,7 +110,10 @@ async def synthesize_drama(
             temp_dir=temp_dir
         )
     except Exception as e:
-        logger.exception("Phase 3: Audio merge and SRT generation failed", error=str(e))
+        logger.exception(
+            "Phase 3: Audio merge and SRT generation failed",
+            error_type=type(e).__name__,
+        )
         raise Exception(f"Post-production failed: {str(e)}")
         
     # Step 4: Upload to Cloudflare R2
@@ -133,20 +144,10 @@ async def synthesize_drama(
             subfolder="temp"
         )
         
-        # Construct Public URLs
-        public_domain = os.getenv("R2_PUBLIC_DOMAIN")
-        if not public_domain:
-            # Fallback to just the key if domain not set, or warn
-            logger.warn("R2_PUBLIC_DOMAIN not set", action="returning_keys_only")
-            audio_url = audio_key
-            srt_url = srt_key
-        else:
-            # Ensure domain doesn't have trailing slash
-            public_domain = public_domain.rstrip("/")
-            audio_url = f"{public_domain}/{audio_key}"
-            srt_url = f"{public_domain}/{srt_key}"
+        audio_url = r2_storage.build_public_url(audio_key)
+        srt_url = r2_storage.build_public_url(srt_key)
             
-        logger.info("Upload Complete", audio=audio_url, srt=srt_url)
+        logger.info("Upload complete", project_id=project_id, chapter_id=chapter_id)
         
         # Remove temp files immediately (as requested)
         if os.path.exists(final_audio_path):
@@ -161,5 +162,10 @@ async def synthesize_drama(
         }
 
     except Exception as e:
-        logger.exception("Phase 4: R2 upload failed", project_id=project_id, chapter_id=chapter_id, error=str(e))
+        logger.exception(
+            "Phase 4: R2 upload failed",
+            project_id=project_id,
+            chapter_id=chapter_id,
+            error_type=type(e).__name__,
+        )
         raise Exception(f"Upload failed: {str(e)}")

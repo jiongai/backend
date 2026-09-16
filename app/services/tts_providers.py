@@ -279,7 +279,7 @@ class ElevenLabsTTSProvider(TTSProvider):
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    logger.warn("ElevenLabs retry attempt", attempt=attempt+1, max_retries=max_retries)
+                    logger.warning("ElevenLabs retry attempt", attempt=attempt+1, max_retries=max_retries)
                     
                 # Note: ElevenLabs Python SDK generate returns generator or bytes.
                 # The 'convert' method is correct for V3 SDK.

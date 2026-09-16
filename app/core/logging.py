@@ -1,7 +1,85 @@
 import logging
+import os
 import sys
+from typing import Any
+
 import structlog
 from asgi_correlation_id import correlation_id
+
+
+SENSITIVE_KEY_PARTS = (
+    "api_key",
+    "authorization",
+    "credential",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+)
+MAX_LOG_STRING_LENGTH = 500
+SENSITIVE_ENVIRONMENT_KEYS = (
+    "DARMAFLOW_API_ACCESS_SECRET",
+    "ELEVENLABS_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    "OPENAI_API_KEY",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+)
+
+
+def _sanitize_log_value(key: str, value: Any) -> Any:
+    """Redact credentials and bound arbitrary log payload sizes."""
+    normalized_key = key.lower()
+    if any(part in normalized_key for part in SENSITIVE_KEY_PARTS):
+        return "[REDACTED]"
+
+    if isinstance(value, dict):
+        return {
+            str(child_key): _sanitize_log_value(str(child_key), child_value)
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        sanitized = [
+            _sanitize_log_value(normalized_key, item)
+            for item in value[:20]
+        ]
+        if len(value) > 20:
+            sanitized.append(f"[{len(value) - 20} more items]")
+        return sanitized
+    if isinstance(value, str):
+        sanitized = value
+        for environment_key in SENSITIVE_ENVIRONMENT_KEYS:
+            secret_value = os.getenv(environment_key)
+            if secret_value and len(secret_value) >= 4:
+                sanitized = sanitized.replace(secret_value, "[REDACTED]")
+        if len(sanitized) > MAX_LOG_STRING_LENGTH:
+            return f"{sanitized[:MAX_LOG_STRING_LENGTH]}...[truncated]"
+        return sanitized
+    return value
+
+
+def redact_sensitive_data(logger, log_method, event_dict):
+    """Structlog processor that prevents common credentials reaching output."""
+    return {
+        key: _sanitize_log_value(str(key), value)
+        for key, value in event_dict.items()
+    }
+
+
+def control_exception_details(logger, log_method, event_dict):
+    """Suppress stack traces by default in production logs."""
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    configured = os.getenv("LOG_INCLUDE_STACKTRACES", "").strip().lower()
+    if configured:
+        include_stacktraces = configured in {"1", "true", "yes", "on"}
+    else:
+        include_stacktraces = environment not in {"production", "prod"}
+
+    if not include_stacktraces:
+        event_dict.pop("exc_info", None)
+        event_dict.pop("stack", None)
+    return event_dict
+
 
 def configure_logging():
     """
@@ -12,11 +90,14 @@ def configure_logging():
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.filter_by_level,
+        redact_sensitive_data,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
+        control_exception_details,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
+        redact_sensitive_data,
         structlog.processors.UnicodeDecoder(),
     ]
     
@@ -29,14 +110,16 @@ def configure_logging():
     
     processors.insert(1, add_correlation)
 
-    # Renderer selection (JSON for Prod, Console for Dev)
-    # Ideally should be env var controlled. For now default to ConsoleRenderer for dev friendliness
-    # but structured enough.
-    # If production, you might want JSONRenderer.
-    
-    # Using ConsoleRenderer for now as it's easier to read in development
-    # Change to JSONRenderer for production deployment 
-    renderer = structlog.dev.ConsoleRenderer() 
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    log_format = os.getenv("LOG_FORMAT", "").strip().lower()
+    use_json = log_format == "json" or (
+        not log_format and environment in {"production", "prod"}
+    )
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if use_json
+        else structlog.dev.ConsoleRenderer()
+    )
     
     # Final processor chain
     processors.append(renderer)
@@ -49,8 +132,11 @@ def configure_logging():
     )
 
     # Configure Standard Library Logging to define format and level
+    log_level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=logging.INFO,
+        level=log_level,
+        force=True,
     )

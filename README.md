@@ -59,12 +59,17 @@ cp env.template .env
 ```
 
 核心配置项包括：
-- `DARMAFLOW_API_ACCESS_SECRET`：API 访问访问鉴权密钥
+- `ENVIRONMENT`：运行环境；生产环境设置为 `production`
+- `DARMAFLOW_API_ACCESS_SECRET`：API 访问鉴权密钥；生产环境必须设置且不能使用模板占位值
+- `CORS_ALLOWED_ORIGINS`：允许访问 API 的浏览器来源白名单，多个来源用逗号分隔
+- `LOG_FORMAT` 与 `LOG_LEVEL`：日志格式（`console`/`json`）和级别
 - `ELEVENLABS_API_KEY`：ElevenLabs 语音合成密钥
 - `GOOGLE_APPLICATION_CREDENTIALS_JSON` 或 `GOOGLE_APPLICATION_CREDENTIALS`：Google TTS 服务账号凭证
 - `AZURE_SPEECH_KEY` 与 `AZURE_SPEECH_REGION`：Azure 语音服务
 - `OPENAI_API_KEY`：OpenAI 语音服务
 - `R2_*`：Cloudflare R2 存储桶连接参数
+
+受保护接口缺少 `X-Access-Secret` 时返回 `401`，密钥错误返回 `403`。生产环境若没有正确配置服务端访问密钥，则返回 `503`，不会自动降级为公开访问。
 
 ### 4. 启动服务
 
@@ -77,6 +82,14 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 服务就绪后，可在浏览器访问：`http://localhost:8000/docs` 查看交互式 Swagger API 文档。
+
+### 5. 运行单元测试
+
+```bash
+python -m unittest discover -v
+```
+
+测试使用临时文件和 mock TTS/R2 客户端，不会调用真实云服务或消耗供应商额度。
 
 ---
 

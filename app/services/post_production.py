@@ -6,7 +6,12 @@ Merges audio segments and generates SRT subtitles for the audio drama.
 import os
 from pathlib import Path
 from typing import List, Dict, Tuple
+
+import structlog
 from pydub import AudioSegment
+
+
+logger = structlog.get_logger(__name__)
 
 # ========================================
 # Configure ffmpeg for Vercel/Serverless
@@ -14,12 +19,9 @@ from pydub import AudioSegment
 # Check if ffmpeg was configured by main.py
 ffmpeg_binary = os.getenv('FFMPEG_BINARY')
 if ffmpeg_binary:
-    print(f"✅ [post_production] Using FFMPEG_BINARY from environment: {ffmpeg_binary}")
-    # Verify it's configured in AudioSegment
-    print(f"✅ [post_production] AudioSegment.converter = {AudioSegment.converter}")
-    print(f"✅ [post_production] AudioSegment.ffmpeg = {AudioSegment.ffmpeg}")
+    logger.info("Using configured ffmpeg binary")
 else:
-    print("ℹ️  [post_production] No FFMPEG_BINARY set, using system ffmpeg")
+    logger.info("Using system ffmpeg binary")
 # ========================================
 
 
@@ -110,10 +112,14 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         
         # Load the audio segment
         try:
-            print(f"🔍 Loading audio file: {audio_file_path}")
-            audio_segment = AudioSegment.from_file(audio_file_path)
+            with open(audio_file_path, "rb") as audio_file:
+                audio_segment = AudioSegment.from_file(audio_file)
         except Exception as e:
-            print(f"❌ Failed to load audio file: {e}")
+            logger.exception(
+                "Failed to load audio segment",
+                segment_index=idx,
+                error_type=type(e).__name__,
+            )
             raise Exception(f"Failed to load audio file {audio_file_path}: {str(e)}")
         
         # Add silence gap before this segment (except for the first segment)
@@ -151,7 +157,6 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
     # Export final audio
     final_audio_path = output_path / "final.mp3"
     try:
-        print(f"🔍 Exporting final audio to: {final_audio_path}")
         exported_file = final_audio.export(
             final_audio_path,
             format="mp3",
@@ -163,9 +168,12 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
             }
         )
         exported_file.close()
-        print(f"✅ Exported final audio successfully")
+        logger.info("Final audio exported", segments_count=len(segments))
     except Exception as e:
-        print(f"❌ Failed to export final audio: {e}")
+        logger.exception(
+            "Failed to export final audio",
+            error_type=type(e).__name__,
+        )
         raise Exception(f"Failed to export final audio: {str(e)}")
     
     # Export SRT subtitles
@@ -191,7 +199,8 @@ def get_audio_duration(audio_file_path: str) -> int:
     Returns:
         int: Duration in milliseconds
     """
-    audio = AudioSegment.from_file(audio_file_path)
+    with open(audio_file_path, "rb") as audio_file:
+        audio = AudioSegment.from_file(audio_file)
     return len(audio)
 
 
@@ -214,8 +223,10 @@ def add_background_music(
         str: Path to the output file
     """
     # Load audio files
-    main_audio = AudioSegment.from_file(main_audio_path)
-    background_music = AudioSegment.from_file(music_path)
+    with open(main_audio_path, "rb") as main_audio_file:
+        main_audio = AudioSegment.from_file(main_audio_file)
+    with open(music_path, "rb") as music_file:
+        background_music = AudioSegment.from_file(music_file)
     
     # Adjust music volume
     background_music = background_music + music_volume
@@ -233,6 +244,7 @@ def add_background_music(
     final_audio = main_audio.overlay(background_music)
     
     # Export
-    final_audio.export(output_path, format="mp3", bitrate="192k")
+    exported_file = final_audio.export(output_path, format="mp3", bitrate="192k")
+    exported_file.close()
     
     return output_path

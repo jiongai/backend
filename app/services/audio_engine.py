@@ -33,7 +33,7 @@ def load_voice_config():
         with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logger.error("Failed to load voice config", error=str(e))
+        logger.error("Failed to load voice config", error_type=type(e).__name__)
         # Return empty defaults to avoid crash, but system will be degraded
         return {
             "VOICE_MAP": {},
@@ -50,7 +50,7 @@ def load_avatar_map():
             with open(map_path, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
-        logger.warn("Failed to load avatar map", error=str(e))
+        logger.warning("Failed to load avatar map", error_type=type(e).__name__)
     return {}
 
 _AVATAR_MAP = load_avatar_map()
@@ -383,7 +383,13 @@ class TTSManager:
         
         voice_index = hash_int % len(target_pool)
         selected_voice = target_pool[voice_index]
-        logger.info("Voice assigned", character=character, gender=gender, provider=provider, voice=selected_voice, index=voice_index)
+        logger.info(
+            "Voice assigned",
+            gender=gender,
+            provider=provider,
+            voice=selected_voice,
+            index=voice_index,
+        )
         return f"{provider}:{selected_voice}"
         
     def _get_monthly_usage(self) -> int:
@@ -416,7 +422,7 @@ class TTSManager:
             with open(USAGE_FILE, 'w') as f:
                 json.dump(data, f)
         except Exception as e:
-            logger.warn("Failed to update usage stats", error=str(e))
+            logger.warning("Failed to update usage stats", error_type=type(e).__name__)
 
     def select_provider(self, segment_type: str, text: str, user_tier: str, emotion: str) -> str:
         """
@@ -671,7 +677,6 @@ class TTSManager:
 
     async def generate(self, segment: Dict, output_file: str, user_tier: str = "free", elevenlabs_key: str = None) -> None:
         text = segment["text"]
-        character = segment.get("character", "Narrator")
         emotion = segment.get("emotion", "neutral")
         gender = segment.get("gender", "male")
         pacing = float(segment.get("pacing", 1.0))
@@ -683,7 +688,7 @@ class TTSManager:
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
         
         logger.info("Routing TTS request", 
-            text_snippet=text[:15], 
+            text_characters=len(text),
             provider=provider_name, 
             user_tier=user_tier, 
             voice=specific_voice_id or 'Default', 
@@ -740,10 +745,9 @@ class TTSManager:
                 "TTS provider generation failed",
                 provider=provider_name,
                 voice=specific_voice_id,
-                character=character,
                 segment_type=segment.get("type"),
-                text_snippet=text[:30],
-                error=str(e)
+                text_characters=len(text),
+                error_type=type(e).__name__,
             )
             raise
 

@@ -1,7 +1,40 @@
+"""Cloudflare R2 storage and strict public artifact URL handling."""
 
 import os
+import re
+import uuid
+from dataclasses import dataclass
+from typing import Optional, Set, Tuple
+from urllib.parse import unquote, urlsplit
+
 import boto3
+import structlog
 from botocore.exceptions import ClientError
+
+
+logger = structlog.get_logger(__name__)
+
+OBJECT_KEY_PATTERN = re.compile(
+    r"^projects/"
+    r"(?P<project_id>[A-Za-z0-9][A-Za-z0-9._-]{0,127})/"
+    r"(?P<folder>temp|saved)/"
+    r"(?P<filename>[A-Za-z0-9][A-Za-z0-9._-]{0,199})"
+    r"(?P<extension>\.mp3|\.srt)$"
+)
+IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+ALLOWED_FOLDERS = {"temp", "saved"}
+
+
+@dataclass(frozen=True)
+class R2ObjectReference:
+    """Validated identity extracted from an R2 public URL."""
+
+    key: str
+    project_id: str
+    folder: str
+    filename: str
+    extension: str
+
 
 class R2Storage:
     def __init__(self):
@@ -9,275 +42,295 @@ class R2Storage:
         self.access_key_id = os.getenv("R2_ACCESS_KEY_ID")
         self.secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
         self.bucket_name = os.getenv("R2_BUCKET_NAME")
-        
-        if not all([self.endpoint_url, self.access_key_id, self.secret_access_key, self.bucket_name]):
-            print("⚠️ R2 Storage initialized but missing configuration")
+
+        if not all([
+            self.endpoint_url,
+            self.access_key_id,
+            self.secret_access_key,
+            self.bucket_name,
+        ]):
+            logger.warning("R2 storage is not configured")
             self.s3_client = None
             return
 
         try:
             self.s3_client = boto3.client(
-                service_name='s3',
+                service_name="s3",
                 endpoint_url=self.endpoint_url,
                 aws_access_key_id=self.access_key_id,
                 aws_secret_access_key=self.secret_access_key,
-                # R2 specific config often helps
-                config=boto3.session.Config(signature_version='s3v4')
+                config=boto3.session.Config(signature_version="s3v4"),
             )
-        except Exception as e:
-            print(f"❌ Failed to initialize R2 client: {e}")
+        except Exception as exc:
+            logger.exception(
+                "Failed to initialize R2 client",
+                error_type=type(exc).__name__,
+            )
             self.s3_client = None
 
-    def upload_file(self, file_path: str, project_id: str, chapter_id: str, content_type: str = 'audio/mpeg', subfolder: str = "") -> str:
-        """
-        Uploads a file to Cloudflare R2 with best practices.
-        
-        Args:
-            file_path: Absolute path to the local file.
-            project_id: Project identifier for folder structure.
-            chapter_id: Chapter identifier (filename without extension).
-            content_type: MIME type of the file.
-            
-        Returns:
-            str: The object key (path) in the bucket.
-        """
+    @staticmethod
+    def _public_domain() -> str:
+        public_domain = os.getenv("R2_PUBLIC_DOMAIN", "").strip().rstrip("/")
+        parsed = urlsplit(public_domain)
+        if (
+            not public_domain
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError("R2_PUBLIC_DOMAIN must be an absolute HTTP(S) URL")
+        return public_domain
+
+    @staticmethod
+    def _validate_identifier(value: str, field_name: str) -> str:
+        if not isinstance(value, str) or not IDENTIFIER_PATTERN.fullmatch(value):
+            raise ValueError(f"Invalid R2 {field_name}")
+        return value
+
+    def parse_public_url(
+        self,
+        source_url: str,
+        *,
+        expected_extension: Optional[str] = None,
+        allowed_folders: Optional[Set[str]] = None,
+    ) -> R2ObjectReference:
+        """Parse only canonical artifact URLs belonging to the configured domain."""
+        if not isinstance(source_url, str) or not source_url:
+            raise ValueError("R2 artifact URL is required")
+        if any(ord(character) < 32 for character in source_url):
+            raise ValueError("R2 artifact URL contains control characters")
+
+        public_domain = self._public_domain()
+        configured = urlsplit(public_domain)
+        candidate = urlsplit(source_url)
+
+        if candidate.scheme != configured.scheme or candidate.netloc != configured.netloc:
+            raise ValueError("R2 artifact URL does not match the configured public domain")
+        if candidate.username or candidate.password or candidate.query or candidate.fragment:
+            raise ValueError("R2 artifact URL must not contain credentials, query, or fragment")
+        if unquote(candidate.path) != candidate.path or "\\" in candidate.path:
+            raise ValueError("R2 artifact URL must use an unencoded canonical path")
+
+        base_path = configured.path.rstrip("/")
+        expected_prefix = f"{base_path}/" if base_path else "/"
+        if not candidate.path.startswith(expected_prefix):
+            raise ValueError("R2 artifact URL is outside the configured public path")
+
+        object_key = candidate.path[len(expected_prefix):]
+        match = OBJECT_KEY_PATTERN.fullmatch(object_key)
+        if not match:
+            raise ValueError("R2 artifact URL has an invalid object key")
+
+        extension = match.group("extension")
+        folder = match.group("folder")
+        if expected_extension and extension != expected_extension:
+            raise ValueError(f"Expected an {expected_extension} R2 artifact URL")
+        if allowed_folders is not None:
+            invalid_folders = set(allowed_folders) - ALLOWED_FOLDERS
+            if invalid_folders:
+                raise ValueError("Invalid allowed R2 folder configuration")
+            if folder not in allowed_folders:
+                expected = ", ".join(sorted(allowed_folders))
+                raise ValueError(f"R2 artifact must be in one of these folders: {expected}")
+
+        return R2ObjectReference(
+            key=object_key,
+            project_id=match.group("project_id"),
+            folder=folder,
+            filename=match.group("filename"),
+            extension=extension,
+        )
+
+    def validate_artifact_pair(
+        self,
+        audio_url: str,
+        srt_url: str,
+        *,
+        allowed_folders: Set[str],
+    ) -> Tuple[R2ObjectReference, R2ObjectReference]:
+        """Validate an audio/subtitle pair before any storage mutation occurs."""
+        audio = self.parse_public_url(
+            audio_url,
+            expected_extension=".mp3",
+            allowed_folders=allowed_folders,
+        )
+        subtitles = self.parse_public_url(
+            srt_url,
+            expected_extension=".srt",
+            allowed_folders=allowed_folders,
+        )
+        if audio.project_id != subtitles.project_id:
+            raise ValueError("Audio and subtitle artifacts must belong to the same project")
+        if audio.folder != subtitles.folder:
+            raise ValueError("Audio and subtitle artifacts must be in the same folder")
+        return audio, subtitles
+
+    def build_public_url(self, object_key: str) -> str:
+        if not OBJECT_KEY_PATTERN.fullmatch(object_key):
+            raise ValueError("Invalid R2 object key")
+        return f"{self._public_domain()}/{object_key}"
+
+    def upload_file(
+        self,
+        file_path: str,
+        project_id: str,
+        chapter_id: str,
+        content_type: str = "audio/mpeg",
+        subfolder: str = "",
+    ) -> str:
+        """Upload a local MP3 or SRT artifact and return its object key."""
         if not self.s3_client:
             raise RuntimeError("R2 Client is not configured")
 
-        # Determine extension from input file path
-        if file_path.lower().endswith('.srt'):
-            ext = ".srt"
-        else:
-            ext = ".mp3"
+        project_id = self._validate_identifier(project_id, "project_id")
+        chapter_id = self._validate_identifier(chapter_id, "chapter_id")
+        if subfolder not in {"", *ALLOWED_FOLDERS}:
+            raise ValueError("Invalid R2 subfolder")
 
-        # 1. Key Naming (Folder Structure)
-        # projects/{project_id}/{subfolder}/{chapter_id}.{ext}
-        # Clean subfolder
+        extension = ".srt" if file_path.lower().endswith(".srt") else ".mp3"
         subfolder_path = f"{subfolder}/" if subfolder else ""
-        object_key = f"projects/{project_id}/{subfolder_path}{chapter_id}{ext}"
-        
+        object_key = f"projects/{project_id}/{subfolder_path}{chapter_id}{extension}"
+
         try:
-            print(f"🚀 Uploading to R2: {object_key}...")
-            
-            # 2. Content-Type & 3. Cache-Control
-            extra_args = {
-                'ContentType': content_type,
-                'CacheControl': 'max-age=31536000' # 1 Year Cache
-            }
-            
             self.s3_client.upload_file(
                 Filename=file_path,
                 Bucket=self.bucket_name,
                 Key=object_key,
-                ExtraArgs=extra_args
+                ExtraArgs={
+                    "ContentType": content_type,
+                    "CacheControl": "max-age=31536000",
+                },
             )
-            
-            print(f"✅ Upload successful: {object_key}")
+            logger.info(
+                "R2 upload completed",
+                project_id=project_id,
+                folder=subfolder or "root",
+                extension=extension,
+            )
             return object_key
-            
-        except ClientError as e:
-            print(f"❌ R2 Upload Failed: {e}")
-            raise e
-        except Exception as e:
-            print(f"❌ An unexpected error occurred during upload: {e}")
-            raise e
+        except ClientError as exc:
+            logger.exception(
+                "R2 upload failed",
+                project_id=project_id,
+                error_code=exc.response.get("Error", {}).get("Code"),
+            )
+            raise
 
     def save_file_as_new(self, source_url: str) -> str:
-        """
-        Copies a file (from temp or saved) to a NEW 'saved' location with a NEW UUID.
-        Returns the new public URL.
-        """
+        """Move a temporary artifact into saved storage; saved URLs are idempotent."""
         if not self.s3_client:
-             raise RuntimeError("R2 Client is not configured")
-        
-        from uuid import uuid4
+            raise RuntimeError("R2 Client is not configured")
 
-        # 1. Parse Key from URL
-        r2_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
-        clean_domain = r2_domain.replace("https://", "").replace("http://", "").rstrip("/")
-        
-        # Remove protocol from input
-        clean_source = source_url.replace("https://", "").replace("http://", "")
-        
-        if clean_domain and clean_source.startswith(clean_domain):
-            source_key = clean_source[len(clean_domain):].lstrip("/")
-        else:
-            # Fallback
-            if "projects/" in clean_source:
-                source_key = clean_source[clean_source.find("projects/"):]
-            else:
-                 raise ValueError("Invalid URL format: Could not extract object key")
+        source = self.parse_public_url(
+            source_url,
+            allowed_folders={"temp", "saved"},
+        )
+        if source.folder == "saved":
+            logger.info(
+                "R2 artifact already saved",
+                project_id=source.project_id,
+                extension=source.extension,
+            )
+            return self.build_public_url(source.key)
 
-        # Optimization: If already in 'saved', return immediately
-        if "/saved/" in source_key:
-             print(f"⏩ File already saved, returning canonical URL")
-             return f"{clean_domain}/{source_key}"
-
-        # 2. Extract Project ID and Extension
-        # Key format assumption: projects/{project_id}/{subfolder}/{filename}
-        # OR projects/{project_id}/{filename} (legacy)
-        
-        parts = source_key.split("/")
-        # parts[0] = "projects"
-        # parts[1] = project_id
-        
-        if len(parts) < 3 or parts[0] != "projects":
-             raise ValueError(f"Unexpected key format: {source_key}")
-             
-        project_id = parts[1]
-        
-        # Get extension
-        _, ext = os.path.splitext(source_key)
-        if not ext:
-            ext = ".mp3" # default fallback?
-
-        # 3. Generate NEW Destination Key
-        # Format: projects/{project_id}/saved/{NEW_UUID}{ext}
-        new_uuid = str(uuid4())
-        dest_key = f"projects/{project_id}/saved/{new_uuid}{ext}"
-
-        print(f"👯 Copying R2 Object: {source_key} -> {dest_key}")
-
+        destination_key = (
+            f"projects/{source.project_id}/saved/{uuid.uuid4()}{source.extension}"
+        )
         try:
-            # COPY
             self.s3_client.copy_object(
                 Bucket=self.bucket_name,
-                CopySource={'Bucket': self.bucket_name, 'Key': source_key},
-                Key=dest_key,
-                ACL='public-read'
+                CopySource={"Bucket": self.bucket_name, "Key": source.key},
+                Key=destination_key,
+                ACL="public-read",
             )
-            
-            # Conditional Delete (Move if temp, Copy if saved)
-            if "/temp/" in source_key:
-                try:
-                    self.s3_client.delete_object(
-                        Bucket=self.bucket_name,
-                        Key=source_key
-                    )
-                    print(f"🗑️ Deleted temp source: {source_key}")
-                except Exception as del_err:
-                     print(f"⚠️ Failed to delete temp source: {del_err}")
-            
-            # Return new URL
-            new_url = f"{os.getenv('R2_PUBLIC_DOMAIN')}/{dest_key}"
-            return new_url
-            
-        except ClientError as e:
-            print(f"❌ R2 Copy Failed: {e}")
-            raise e
+            self.s3_client.delete_object(
+                Bucket=self.bucket_name,
+                Key=source.key,
+            )
+            logger.info(
+                "R2 artifact saved",
+                project_id=source.project_id,
+                extension=source.extension,
+            )
+            return self.build_public_url(destination_key)
+        except ClientError as exc:
+            logger.exception(
+                "R2 save failed",
+                project_id=source.project_id,
+                error_code=exc.response.get("Error", {}).get("Code"),
+            )
+            raise
 
     def delete_file(self, file_url: str) -> bool:
-        """
-        Deletes a file from R2 based on its public URL.
-        Returns True if successful, False otherwise.
-        """
+        """Delete a validated temporary or saved artifact."""
         if not self.s3_client:
-             raise RuntimeError("R2 Client is not configured")
+            raise RuntimeError("R2 Client is not configured")
 
+        source = self.parse_public_url(
+            file_url,
+            allowed_folders={"temp", "saved"},
+        )
         try:
-            # 1. Parse Key from URL (Same logic as save_file_as_new)
-            r2_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
-            clean_domain = r2_domain.replace("https://", "").replace("http://", "").rstrip("/")
-            clean_source = file_url.replace("https://", "").replace("http://", "")
-            
-            if clean_domain and clean_source.startswith(clean_domain):
-                source_key = clean_source[len(clean_domain):].lstrip("/")
-            else:
-                if "projects/" in clean_source:
-                    source_key = clean_source[clean_source.find("projects/"):]
-                else:
-                     logger.warn("Delete failed: Invalid URL", url=file_url)
-                     return False
-            
-            print(f"🗑️ Deleting R2 Object: {source_key}")
-            
             self.s3_client.delete_object(
                 Bucket=self.bucket_name,
-                Key=source_key
+                Key=source.key,
+            )
+            logger.info(
+                "R2 artifact deleted",
+                project_id=source.project_id,
+                folder=source.folder,
+                extension=source.extension,
             )
             return True
-            
-        except Exception as e:
-            print(f"❌ R2 Delete Failed: {e}")
-            return False
+        except ClientError as exc:
+            logger.exception(
+                "R2 delete failed",
+                project_id=source.project_id,
+                error_code=exc.response.get("Error", {}).get("Code"),
+            )
+            raise
 
     def move_file_to_temp(self, source_url: str) -> str:
-        """
-        Moves a file from 'saved' folder back to 'temp' folder.
-        Actually performs Copy (to new temp key) + Delete (source).
-        Returns new public URL.
-        """
+        """Move a validated saved artifact back into temporary storage."""
         if not self.s3_client:
-             raise RuntimeError("R2 Client is not configured")
-        
-        from uuid import uuid4
+            raise RuntimeError("R2 Client is not configured")
 
-        # 1. Parse Key from URL
-        r2_domain = os.getenv("R2_PUBLIC_DOMAIN", "")
-        clean_domain = r2_domain.replace("https://", "").replace("http://", "").rstrip("/")
-        clean_source = source_url.replace("https://", "").replace("http://", "")
-        
-        if clean_domain and clean_source.startswith(clean_domain):
-            source_key = clean_source[len(clean_domain):].lstrip("/")
-        else:
-            if "projects/" in clean_source:
-                source_key = clean_source[clean_source.find("projects/"):]
-            else:
-                 raise ValueError("Invalid URL format: Could not extract object key")
-
-        # 2. Validation: Must be in 'saved' folder
-        if "/saved/" not in source_key:
-             raise ValueError("Source file is not in 'saved' folder")
-
-        # 3. Generate NEW Destination Key in 'temp'
-        # Current: projects/{project_id}/saved/{filename}
-        # Target: projects/{project_id}/temp/{NEW_UUID}{ext}
-        
-        parts = source_key.split("/")
-        # We assume standard structure: projects/{project_id}/...
-        if len(parts) < 3 or parts[0] != "projects":
-             # Try to start from 'projects' if path is deeper or different, but strictly we need project_id
-             # Let's rely on finding "projects/" and taking the next token as project_id
-             try:
-                 idx = parts.index("projects")
-                 project_id = parts[idx+1]
-             except (ValueError, IndexError):
-                 raise ValueError("Could not determine project_id from key")
-        else:
-             project_id = parts[1]
-
-        _, ext = os.path.splitext(source_key)
-        if not ext:
-            ext = ".mp3"
-
-        new_uuid = str(uuid4())
-        dest_key = f"projects/{project_id}/temp/{new_uuid}{ext}"
-
-        print(f"🔄 Moving to Temp: {source_key} -> {dest_key}")
-
+        source = self.parse_public_url(
+            source_url,
+            allowed_folders={"temp", "saved"},
+        )
+        if source.folder != "saved":
+            raise ValueError("Source file is not in 'saved' folder")
+        destination_key = (
+            f"projects/{source.project_id}/temp/{uuid.uuid4()}{source.extension}"
+        )
         try:
-            # COPY
             self.s3_client.copy_object(
                 Bucket=self.bucket_name,
-                CopySource={'Bucket': self.bucket_name, 'Key': source_key},
-                Key=dest_key,
-                ACL='public-read'
+                CopySource={"Bucket": self.bucket_name, "Key": source.key},
+                Key=destination_key,
+                ACL="public-read",
             )
-            
-            # DELETE Source
             self.s3_client.delete_object(
                 Bucket=self.bucket_name,
-                Key=source_key
+                Key=source.key,
             )
-            print(f"🗑️ Deleted source from saved: {source_key}")
-            
-            # Return new URL
-            new_url = f"{os.getenv('R2_PUBLIC_DOMAIN')}/{dest_key}"
-            return new_url
-            
-        except ClientError as e:
-            print(f"❌ R2 Move Failed: {e}")
-            raise e
+            logger.info(
+                "R2 artifact moved to temp",
+                project_id=source.project_id,
+                extension=source.extension,
+            )
+            return self.build_public_url(destination_key)
+        except ClientError as exc:
+            logger.exception(
+                "R2 move failed",
+                project_id=source.project_id,
+                error_code=exc.response.get("Error", {}).get("Code"),
+            )
+            raise
 
-# Singleton instance
+
 r2_storage = R2Storage()
