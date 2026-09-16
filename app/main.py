@@ -51,7 +51,7 @@ else:
     logger.info("Running locally or on Railway, using system ffmpeg")
 # ========================================
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header, Query, Depends, Security
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Header, Query, Depends, Security, Request
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -96,6 +96,20 @@ app.add_middleware(
 
 # Add Request ID Middleware
 app.add_middleware(CorrelationIdMiddleware)
+
+# Global Exception Handler for Unhandled Errors
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled server exception",
+        path=request.url.path,
+        method=request.method,
+        error=str(exc)
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal Server Error: {str(exc)}"}
+    )
 
 # ========================================
 # Security Dependency
@@ -260,7 +274,11 @@ async def assign_voices(
         
         logger.info("Assign voices response", response=response_data)
         return response_data
+    except ValueError as e:
+        logger.warning("Voice assignment validation failed", error=str(e))
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
+        logger.exception("Voice assignment failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -269,50 +287,61 @@ async def assign_voices(
 async def synthesize_audio_drama(
     request: SynthesizeRequest,
     background_tasks: BackgroundTasks,
-    openrouter_api_key: Optional[str] = Header(None, alias="X-OpenRouter-API-Key"),
     elevenlabs_api_key: Optional[str] = Header(None, alias="X-ElevenLabs-API-Key"),
     user_tier: str = Header("free", alias="X-User-Tier")
 ):
     """
     Synthesize audio from a provided JSON script.
     """
-    # Get API keys
-    openrouter_key = openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
     elevenlabs_key = elevenlabs_api_key or os.getenv("ELEVENLABS_API_KEY")
-    
-    if not elevenlabs_key:
+    script = [dict(segment) for segment in request.script]
+
+    if request.limit == 0:
+        logger.info("Limit=0, skipping synthesis")
+        return DramaResponse(
+            message="Synthesis skipped (limit=0)",
+            segments_count=0,
+            audio_url=None,
+            srt_url=None,
+            timeline=None
+        )
+    if request.limit is not None and request.limit > 0:
+        logger.info("Limiting synthesis", limit=request.limit)
+        script = script[:request.limit]
+
+    try:
+        prepared_script = tts_manager.prepare_script(script, user_tier=user_tier)
+        required_providers = tts_manager.get_required_providers(prepared_script)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    missing_providers = tts_manager.get_missing_provider_credentials(
+        required_providers,
+        elevenlabs_key=elevenlabs_key
+    )
+    if missing_providers:
         raise HTTPException(
-            status_code=400,
-            detail="ElevenLabs API key is required."
+            status_code=503,
+            detail={
+                "code": "tts_provider_not_configured",
+                "providers": missing_providers
+            }
         )
 
-    # Create temp dir
     temp_dir = tempfile.mkdtemp(prefix="dramaflow_synth_")
-    
-    try:
-        logger.info("Synthesize request received", user_tier=user_tier, script_segments=len(request.script))
-        logger.info("Request parameters", limit=request.limit, script=request.script)
 
-        
-        if request.limit is not None:
-            if request.limit == 0:
-                logger.info("Limit=0, skipping synthesis")
-                return DramaResponse(
-                    message="Synthesis skipped (limit=0)",
-                    segments_count=0,
-                    audio_url=None,
-                    srt_url=None,
-                    timeline=None
-                )
-            elif request.limit > 0:
-                logger.info("Limiting synthesis", limit=request.limit)
-                request.script = request.script[:request.limit]
+    try:
+        logger.info(
+            "Synthesize request received",
+            user_tier=user_tier,
+            script_segments=len(prepared_script),
+            providers=sorted(required_providers)
+        )
 
         # Result is now a dict with URLs
         result = await synthesize_drama(
-            script=request.script,
+            script=prepared_script,
             temp_dir=temp_dir,
-            openrouter_key=openrouter_key,
             elevenlabs_key=elevenlabs_key,
             user_tier=user_tier
         )
@@ -322,14 +351,23 @@ async def synthesize_audio_drama(
         
         return DramaResponse(
             message="Synthesis successful",
-            segments_count=len(request.script),
+            segments_count=len(prepared_script),
             audio_url=result["audio_url"],
             srt_url=result["srt_url"],
             timeline=result.get("timeline")
         )
         
+    except HTTPException:
+        cleanup_temp_directory(temp_dir)
+        raise
     except Exception as e:
         cleanup_temp_directory(temp_dir)
+        logger.exception(
+            "Synthesize audio drama failed",
+            user_tier=user_tier,
+            script_segments=len(prepared_script),
+            error=str(e)
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -346,6 +384,24 @@ async def review_voice(
     Generate a single audio clip for previewing a voice.
     """
     elevenlabs_key = elevenlabs_api_key or os.getenv("ELEVENLABS_API_KEY")
+
+    try:
+        provider_name, _ = tts_manager.resolve_voice({"voice_id": request.voice_id})
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    missing_providers = tts_manager.get_missing_provider_credentials(
+        {provider_name},
+        elevenlabs_key=elevenlabs_key
+    )
+    if missing_providers:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "tts_provider_not_configured",
+                "providers": missing_providers
+            }
+        )
     
     # Create temp dir
     temp_dir = tempfile.mkdtemp(prefix="dramaflow_review_")
@@ -398,13 +454,17 @@ async def review_voice(
             filename="preview.mp3"
         )
 
+    except HTTPException:
+        cleanup_temp_directory(temp_dir)
+        raise
     except Exception as e:
         cleanup_temp_directory(temp_dir)
-        logger.error("Review generation failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
+        logger.exception(
+            "Review voice generation failed",
+            voice=request.voice_id,
+            text_snippet=request.text[:30] if request.text else "",
+            error=str(e)
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -432,10 +492,10 @@ async def save_files(request: SaveFilesRequest):
             "srt_url": new_srt_url
         }
     except ValueError as ve:
-        logger.warn("Save files validation failed", error=str(ve))
+        logger.warning("Save files validation failed", error=str(ve))
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        logger.error("Save files failed", error=str(e))
+        logger.exception("Save files failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -460,7 +520,7 @@ async def delete_files(request: DeleteFilesRequest):
             "details": results
         }
     except Exception as e:
-        logger.error("Delete files failed", error=str(e))
+        logger.exception("Delete files failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -488,10 +548,10 @@ async def move_files_to_temp(request: MoveFilesToTempRequest):
             "srt_url": new_srt_url
         }
     except ValueError as ve:
-        logger.warn("Move files validation failed", error=str(ve))
+        logger.warning("Move files validation failed", error=str(ve))
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        logger.error("Move files failed", error=str(e))
+        logger.exception("Move files failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/voices", response_model=dict, dependencies=[Depends(verify_secret_key)])
@@ -543,4 +603,3 @@ if __name__ == "__main__":
         port=port,
         reload=True
     )
-

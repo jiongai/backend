@@ -1,141 +1,163 @@
-"""
-测试旁白声音一致性
-验证所有旁白片段使用相同的声音
-"""
+"""Regression tests for script preparation and narrator consistency."""
 
-import re
+import unittest
 
-def detect_language(text: str) -> str:
-    """检测文本语言"""
-    has_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-    return "chinese" if has_chinese else "english"
+from app.services.audio_engine import tts_manager
 
 
-def get_narrator_voice(text: str) -> str:
-    """根据语言获取旁白声音"""
-    NARRATION_VOICE_EN = "en-US-BrianNeural"
-    NARRATION_VOICE_ZH = "zh-CN-YunxiNeural"
-    
-    language = detect_language(text)
-    if language == "chinese":
-        return NARRATION_VOICE_ZH
-    else:
-        return NARRATION_VOICE_EN
+def segment(
+    segment_type: str,
+    text: str,
+    character: str,
+    gender: str,
+    voice_id: str = "",
+) -> dict:
+    return {
+        "type": segment_type,
+        "text": text,
+        "character": character,
+        "gender": gender,
+        "emotion": "neutral",
+        "pacing": 1.0,
+        "voice_id": voice_id,
+    }
 
 
-def test_consistency():
-    """测试旁白声音一致性"""
-    
-    print("🧪 测试旁白声音一致性")
-    print("=" * 50)
-    print()
-    
-    # 测试用例
-    test_cases = [
-        {
-            "name": "纯中文文本",
-            "text": "老人站在山顶。「你好」少女说。风吹过树林。「再见」他答。",
-            "expected": "zh-CN-YunxiNeural"
-        },
-        {
-            "name": "纯英文文本",
-            "text": "The old man stood. \"Hello\" she said. Wind blew. \"Goodbye\" he replied.",
-            "expected": "en-US-BrianNeural"
-        },
-        {
-            "name": "混合语言文本",
-            "text": "The story begins in an old town. 老人站在山顶。",
-            "expected": "zh-CN-YunxiNeural"  # 有中文就用中文
-        }
-    ]
-    
-    passed = 0
-    failed = 0
-    
-    for test in test_cases:
-        print(f"测试: {test['name']}")
-        print(f"文本: {test['text'][:50]}...")
-        
-        narrator = get_narrator_voice(test['text'])
-        expected = test['expected']
-        
-        if narrator == expected:
-            print(f"✅ 通过 - 使用旁白: {narrator}")
-            passed += 1
-        else:
-            print(f"❌ 失败 - 预期: {expected}, 实际: {narrator}")
-            failed += 1
-        
-        print()
-    
-    print("=" * 50)
-    print(f"📊 测试结果: {passed} 通过, {failed} 失败")
-    print()
-    
-    # 模拟脚本片段测试
-    print("🎭 模拟脚本片段测试")
-    print("=" * 50)
-    
-    script = [
-        {"type": "narration", "gender": "male", "text": "老人走向前"},
-        {"type": "dialogue", "gender": "female", "text": "你好", "character": "少女"},
-        {"type": "narration", "gender": "female", "text": "她说道"},  # ← gender 是 female
-        {"type": "narration", "gender": "male", "text": "他转身"},
-        {"type": "dialogue", "gender": "male", "text": "再见", "character": "老人"}
-    ]
-    
-    # 模拟整个文本
-    full_text = "老人走向前。你好。她说道。他转身。再见。"
-    narrator_voice = get_narrator_voice(full_text)
-    
-    print(f"检测到的旁白声音: {narrator_voice}")
-    print()
-    
-    for i, segment in enumerate(script, 1):
-        segment_type = segment['type']
-        gender = segment.get('gender', 'unknown')
-        
-        if segment_type == "narration":
-            # 旁白：使用固定的 narrator_voice
-            voice = narrator_voice
-            print(f"片段{i} [旁白] gender={gender:6s} → 使用声音: {voice}")
-            
-            # 验证：所有旁白应该使用相同声音
-            if voice != narrator_voice:
-                print(f"   ❌ 错误！应该使用 {narrator_voice}")
-            else:
-                print(f"   ✅ 正确！保持一致")
-                
-        else:
-            # 对话：根据 gender 选择
-            voice_map = {
-                "male": "ElevenLabs-Male",
-                "female": "ElevenLabs-Female"
-            }
-            voice = voice_map.get(gender, "ElevenLabs-Male")
-            print(f"片段{i} [对话] gender={gender:6s} → 使用声音: {voice}")
-        
-        print()
-    
-    print("=" * 50)
-    print("✅ 验证完成：所有旁白使用相同声音！")
-    print()
-    
-    return passed, failed
+class ScriptPreparationTests(unittest.TestCase):
+    def test_empty_voices_are_filled(self):
+        script = [
+            segment("narration", "A quiet night.", "Narrator", "female"),
+            segment("dialogue", "Who is there?", "Alice", "female"),
+        ]
+
+        prepared = tts_manager.prepare_script(script, user_tier="free")
+
+        self.assertTrue(all(item["voice_id"] for item in prepared))
+        self.assertTrue(all(":" in item["voice_id"] for item in prepared))
+        self.assertEqual(script[0]["voice_id"], "")
+        self.assertEqual(script[1]["voice_id"], "")
+
+    def test_narrator_voice_is_independent_of_segment_gender(self):
+        script = [
+            segment("narration", "First passage.", "Narrator", "male"),
+            segment("narration", "Second passage.", "Someone Else", "female"),
+            segment("narration", "Third passage.", "Narrator", "neutral"),
+        ]
+
+        prepared = tts_manager.prepare_script(script, user_tier="free")
+
+        voices = {item["voice_id"] for item in prepared}
+        self.assertEqual(len(voices), 1)
+        self.assertTrue(all(item["character"] == "Narrator" for item in prepared))
+        self.assertTrue(all(item["gender"] == "neutral" for item in prepared))
+
+    def test_one_manual_narrator_voice_is_applied_to_all_narration(self):
+        script = [
+            segment(
+                "narration",
+                "First passage.",
+                "Narrator",
+                "male",
+                "openai:onyx",
+            ),
+            segment("narration", "Second passage.", "Narrator", "female"),
+        ]
+
+        prepared = tts_manager.prepare_script(script, user_tier="free")
+
+        self.assertEqual(
+            [item["voice_id"] for item in prepared],
+            ["openai:onyx", "openai:onyx"],
+        )
+
+    def test_conflicting_manual_narrator_voices_are_rejected(self):
+        script = [
+            segment(
+                "narration",
+                "First passage.",
+                "Narrator",
+                "neutral",
+                "openai:onyx",
+            ),
+            segment(
+                "narration",
+                "Second passage.",
+                "Narrator",
+                "neutral",
+                "openai:alloy",
+            ),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "same voice_id"):
+            tts_manager.prepare_script(script, user_tier="free")
+
+    def test_manual_dialogue_voice_is_preserved(self):
+        script = [
+            segment(
+                "dialogue",
+                "Leave now.",
+                "Alice",
+                "female",
+                "elevenlabs:21m00Tcm4TlvDq8ikWAM",
+            )
+        ]
+
+        prepared = tts_manager.prepare_script(script, user_tier="free")
+
+        self.assertEqual(
+            prepared[0]["voice_id"],
+            "elevenlabs:21m00Tcm4TlvDq8ikWAM",
+        )
+
+    def test_required_providers_come_from_final_voice_ids(self):
+        script = [
+            segment(
+                "dialogue",
+                "Hello.",
+                "Alice",
+                "female",
+                "google:en-US-Neural2-F",
+            ),
+            segment(
+                "dialogue",
+                "Welcome.",
+                "Bob",
+                "male",
+                "openai:onyx",
+            ),
+        ]
+
+        self.assertEqual(
+            tts_manager.get_required_providers(script),
+            {"google", "openai"},
+        )
+
+    def test_google_request_never_requires_elevenlabs_credentials(self):
+        missing = tts_manager.get_missing_provider_credentials({"google"})
+        self.assertNotIn("elevenlabs", missing)
+
+    def test_elevenlabs_credential_is_checked_only_when_required(self):
+        provider = tts_manager.providers["elevenlabs"]
+        original_key = provider.default_key
+        original_enabled = provider._enabled
+        try:
+            provider.default_key = None
+            provider._enabled = True
+            self.assertEqual(
+                tts_manager.get_missing_provider_credentials({"elevenlabs"}),
+                ["elevenlabs"],
+            )
+            self.assertEqual(
+                tts_manager.get_missing_provider_credentials(
+                    {"elevenlabs"},
+                    elevenlabs_key="request-key",
+                ),
+                [],
+            )
+        finally:
+            provider.default_key = original_key
+            provider._enabled = original_enabled
 
 
 if __name__ == "__main__":
-    passed, failed = test_consistency()
-    
-    if failed == 0:
-        print("🎉 所有测试通过！")
-        print()
-        print("修复确认:")
-        print("  ✅ 语言检测正确")
-        print("  ✅ 旁白声音一致")
-        print("  ✅ 忽略 gender 字段")
-        print()
-    else:
-        print(f"⚠️  {failed} 个测试失败")
-        exit(1)
-
+    unittest.main()

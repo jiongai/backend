@@ -157,14 +157,19 @@ class GoogleTTSProvider(TTSProvider):
         
         # Async call wrapper
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: client.synthesize_speech(
-                input=synthesis_input, 
-                voice=voice_params, 
-                audio_config=audio_config
+        try:
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=voice_params,
+                    audio_config=audio_config
+                )
             )
-        )
+        except Exception as e:
+            # 重置 client，确保底层 gRPC 长连接损坏（如 Socket closed / 代理断连）时自动重建全新通道
+            self._client = None
+            raise
         
         # Write to file
         with open(output_file, "wb") as out:

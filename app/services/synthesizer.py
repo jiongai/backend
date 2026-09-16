@@ -1,16 +1,12 @@
 import os
 import asyncio
-import zipfile
-from pathlib import Path
-from typing import List, Dict, Tuple, Optional
-import re
-import json
+from typing import List, Dict
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 
-from .audio_engine import generate_segment_audio, generate_cast_metadata
+from .audio_engine import generate_segment_audio, tts_manager
 
 from uuid import uuid4
 from .post_production import merge_audio_and_generate_srt
@@ -19,41 +15,27 @@ from .storage import r2_storage
 async def synthesize_drama(
     script: List[Dict],
     temp_dir: str,
-    openrouter_key: str,
     elevenlabs_key: str,
     user_tier: str = "free"
-) -> str:
+) -> Dict:
     """
     Orchestrate the synthesis of an audio drama from a script.
     
     Args:
         script: List of script segments (dicts)
         temp_dir: Temporary directory to store artifacts
-        openrouter_key: API key for OpenRouter (not strictly used here but kept for context if needed)
         elevenlabs_key: API key for ElevenLabs
         user_tier: User tier ("free" or "vip")
         
     Returns:
-        str: Path to the generated ZIP package
+        dict: Public artifact URLs and timeline data
     """
     audio_dir = os.path.join(temp_dir, "audio")
     os.makedirs(audio_dir, exist_ok=True)
     
-    # Extract full text for language detection (rough approximation from script)
-    full_text = " ".join([s["text"] for s in script])
-    
-    # Step 0: Detect language for narrator
-    has_chinese = bool(re.search(r'[\u4e00-\u9fff]', full_text))
-    if has_chinese:
-        narrator_voice = "zh-CN-YunxiNeural"
-        logger.info("Detected Chinese contents", voice=narrator_voice)
-    else:
-        narrator_voice = "en-US-BrianNeural"
-        logger.info("Detected English contents", voice=narrator_voice)
-
-    # Step 0.5: Enforce Voice Assignment (Removed)
-    # strict mode: if voice_id is missing, we skip generation in the lower level.
-    # script = tts_manager.assign_voices_to_script(script, user_tier=user_tier)
+    # The API normally prepares the script before credential validation. Do it
+    # again here so direct service callers receive the same safe behavior.
+    script = tts_manager.prepare_script(script, user_tier=user_tier)
 
     # Step 1: Generate Narration (Phase 1)
     logger.info("Starting Phase 1: Narration")
@@ -67,7 +49,6 @@ async def synthesize_drama(
             segment=seg,
             output_dir=audio_dir,
             elevenlabs_api_key=elevenlabs_key,
-            narration_voice=narrator_voice,
             user_tier=user_tier
         ) for _, seg in narration_items
     ]
@@ -80,10 +61,11 @@ async def synthesize_drama(
                 script[idx]["audio_file_path"] = path
             logger.info("Generated narration segments", count=len(narration_paths))
         except Exception as e:
+            logger.exception("Phase 1: Narration generation failed", count=len(narration_items), error=str(e))
             raise Exception(f"Narration generation failed: {str(e)}")
 
     # Step 2: Generate Dialogue (Phase 2)
-    logger.info("Starting Phase 2: Dialogue", provider="ElevenLabs")
+    logger.info("Starting Phase 2: Dialogue", count=len(dialogue_items))
     
     if dialogue_items:
         # ElevenLabs concurrency limit
@@ -95,7 +77,6 @@ async def synthesize_drama(
                     segment=segment,
                     output_dir=audio_dir,
                     elevenlabs_api_key=elevenlabs_key,
-                    narration_voice=narrator_voice,
                     user_tier=user_tier
                 )
         
@@ -110,16 +91,18 @@ async def synthesize_drama(
                 script[idx]["audio_file_path"] = path
             logger.info("Generated dialogue segments", count=len(dialogue_paths))
         except Exception as e:
+            logger.exception("Phase 2: Dialogue generation failed", count=len(dialogue_items), error=str(e))
             raise Exception(f"Dialogue generation failed: {str(e)}")
             
     # Step 3: Merge and SRT
-    logger.info("Merging audio and generating subtitles")
+    logger.info("Merging audio and generating subtitles", segments_count=len(script))
     try:
         final_audio_path, final_srt_path, timeline_data = merge_audio_and_generate_srt(
             segments=script,
             temp_dir=temp_dir
         )
     except Exception as e:
+        logger.exception("Phase 3: Audio merge and SRT generation failed", error=str(e))
         raise Exception(f"Post-production failed: {str(e)}")
         
     # Step 4: Upload to Cloudflare R2
@@ -151,15 +134,6 @@ async def synthesize_drama(
         )
         
         # Construct Public URLs
-        # Assuming the bucket is public or has a custom domain.
-        # R2 public buckets usually look like: https://pub-<hash>.r2.dev/<key>
-        # OR user must provide a public domain base.
-        # Let's assume we pull a public domain env var or fall back to constructing it.
-        # But for now, returning the Key might be safer if the frontend constructs the URL, 
-        # or we return a presigned URL?
-        # User request said: "interface directly return 2 file's url".
-        # Let's assume we use a configured public domain.
-        
         public_domain = os.getenv("R2_PUBLIC_DOMAIN")
         if not public_domain:
             # Fallback to just the key if domain not set, or warn
@@ -175,11 +149,6 @@ async def synthesize_drama(
         logger.info("Upload Complete", audio=audio_url, srt=srt_url)
         
         # Remove temp files immediately (as requested)
-        # We are inside a temp_dir managed by the caller (synthesize_drama's temp_dir arg),
-        # but cleanup is often done by the caller (BackgroundTasks).
-        # However, user said "upload complete delete temp files".
-        # The temp_dir is passed in. If we delete contents here, the caller's cleanup might fail or be redundant.
-        # Safe strategy: We can delete the specific files we created.
         if os.path.exists(final_audio_path):
             os.remove(final_audio_path)
         if os.path.exists(final_srt_path):
@@ -192,5 +161,5 @@ async def synthesize_drama(
         }
 
     except Exception as e:
+        logger.exception("Phase 4: R2 upload failed", project_id=project_id, chapter_id=chapter_id, error=str(e))
         raise Exception(f"Upload failed: {str(e)}")
-

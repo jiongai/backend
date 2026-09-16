@@ -463,61 +463,211 @@ class TTSManager:
         # Default fallback
         return "google"
 
+    @staticmethod
+    def _detect_language(text: str) -> str:
+        """Detect the supported language family used for voice selection."""
+        import re
+        return "zh" if re.search(r'[\u4e00-\u9fff]', text or "") else "en"
+
+    @staticmethod
+    def _apply_language_filter(lang: str, allowed_languages: list = None) -> str:
+        """Keep language selection inside the caller's allowed language set."""
+        if not allowed_languages or lang in allowed_languages:
+            return lang
+        if "en" in allowed_languages:
+            return "en"
+        return allowed_languages[0]
+
+    def _get_narrator_voice(self, provider: str, lang: str) -> str:
+        """Return one canonical, gender-independent narrator voice."""
+        if provider == "azure":
+            return f"azure:{VOICE_MAP['azure'][lang]}"
+        if provider == "google":
+            return f"google:{VOICE_MAP['google'][lang]['male']}"
+        if provider == "openai":
+            return f"openai:{VOICE_MAP['openai']['male']}"
+        raise ValueError(f"Unsupported narrator provider: {provider}")
+
+    def _assign_narrator_voice(
+        self,
+        script: list,
+        user_tier: str,
+        allowed_languages: list = None
+    ) -> None:
+        """Resolve the narrator once and apply that voice to every narration segment."""
+        narration_segments = [
+            segment for segment in script
+            if segment.get("type") == "narration"
+        ]
+        if not narration_segments:
+            return
+
+        manual_voices = {
+            segment["voice_id"].strip()
+            for segment in narration_segments
+            if isinstance(segment.get("voice_id"), str)
+            and segment["voice_id"].strip()
+        }
+        if len(manual_voices) > 1:
+            raise ValueError("All narration segments must use the same voice_id")
+
+        if manual_voices:
+            narrator_voice_id = next(iter(manual_voices))
+        else:
+            narration_text = " ".join(
+                segment.get("text", "") for segment in narration_segments
+            )
+            lang = self._apply_language_filter(
+                self._detect_language(narration_text),
+                allowed_languages
+            )
+            provider = self.select_provider(
+                segment_type="narration",
+                text=narration_text,
+                user_tier=user_tier,
+                emotion="neutral"
+            )
+            narrator_voice_id = self._get_narrator_voice(provider, lang)
+
+        for segment in narration_segments:
+            segment["voice_id"] = narrator_voice_id
+            segment["character"] = "Narrator"
+            segment["gender"] = "neutral"
+
+    def _assign_dialogue_voice(
+        self,
+        segment: Dict,
+        user_tier: str,
+        allowed_languages: list = None
+    ) -> str:
+        """Assign one deterministic voice to a dialogue segment."""
+        text = segment["text"]
+        character = segment.get("character", "Unknown")
+        emotion = segment.get("emotion", "neutral")
+        gender = segment.get("gender", "male")
+        lang = self._apply_language_filter(
+            self._detect_language(text),
+            allowed_languages
+        )
+        provider = self.select_provider(
+            segment_type="dialogue",
+            text=text,
+            user_tier=user_tier,
+            emotion=emotion
+        )
+        voice_id = self._get_consistent_voice(
+            character,
+            gender,
+            provider,
+            lang=lang
+        )
+        if voice_id:
+            return voice_id
+
+        if provider == "google":
+            voices = VOICE_MAP["google"][lang]
+            raw_id = voices.get(gender, voices["male"])
+            return f"google:{raw_id}"
+        if provider == "azure":
+            return f"azure:{VOICE_MAP['azure'][lang]}"
+        if provider == "openai":
+            raw_id = VOICE_MAP["openai"]["male" if gender == "male" else "female"]
+            return f"openai:{raw_id}"
+        raise ValueError(
+            f"Could not assign a voice for character {character!r} using {provider}"
+        )
+
+    def prepare_script(
+        self,
+        script: list,
+        user_tier: str = "free",
+        allowed_languages: list = None
+    ) -> list:
+        """Copy and fully resolve a script before synthesis."""
+        prepared = [dict(segment) for segment in script]
+        self._assign_narrator_voice(prepared, user_tier, allowed_languages)
+
+        for segment in prepared:
+            if segment.get("type") == "narration":
+                continue
+            voice_id = segment.get("voice_id")
+            if isinstance(voice_id, str) and voice_id.strip():
+                continue
+            segment["voice_id"] = self._assign_dialogue_voice(
+                segment,
+                user_tier,
+                allowed_languages
+            )
+
+        unresolved = [
+            index for index, segment in enumerate(prepared)
+            if not isinstance(segment.get("voice_id"), str)
+            or not segment["voice_id"].strip()
+        ]
+        if unresolved:
+            raise ValueError(f"Voice assignment failed for segments: {unresolved}")
+        return prepared
+
+    def resolve_voice(self, segment: Dict) -> tuple[str, str]:
+        """Resolve a segment voice to a provider and raw provider voice ID."""
+        voice_id = str(segment.get("voice_id") or "").strip()
+        provider_hint = str(segment.get("provider") or "").strip().lower()
+        supported = {"google", "azure", "openai", "elevenlabs"}
+
+        if not voice_id:
+            raise ValueError(
+                f"No voice assigned for character: {segment.get('character', 'unknown')}"
+            )
+
+        if ":" in voice_id:
+            provider, raw_voice_id = voice_id.split(":", 1)
+            provider = provider.lower()
+            if provider not in supported:
+                raise ValueError(f"Unsupported TTS provider: {provider}")
+            if not raw_voice_id:
+                raise ValueError("Voice ID cannot be empty")
+            return provider, raw_voice_id
+
+        # Backward compatibility for older clients that send raw voice IDs.
+        if provider_hint in supported:
+            return provider_hint, voice_id
+        if "Neural2" in voice_id or "Wavenet" in voice_id:
+            return "google", voice_id
+        if voice_id.endswith("Neural"):
+            return "azure", voice_id
+        if voice_id in {"onyx", "alloy", "shimmer", "echo", "fable", "nova"}:
+            return "openai", voice_id
+        if len(voice_id) > 15:
+            return "elevenlabs", voice_id
+        raise ValueError(f"Could not determine provider for voice_id: {voice_id}")
+
+    def get_required_providers(self, script: list) -> set[str]:
+        """Return the providers actually referenced by the prepared script."""
+        return {self.resolve_voice(segment)[0] for segment in script}
+
+    def get_missing_provider_credentials(
+        self,
+        required_providers: set[str],
+        elevenlabs_key: str = None
+    ) -> list[str]:
+        """Return only the providers required by this request that are unavailable."""
+        missing = []
+        for provider_name in sorted(required_providers):
+            provider = self.providers[provider_name]
+            if provider_name == "elevenlabs":
+                effective_key = elevenlabs_key or provider.default_key
+                if not provider.is_enabled or not effective_key:
+                    missing.append(provider_name)
+            elif not provider.is_enabled:
+                missing.append(provider_name)
+        return missing
+
     def assign_voices_to_script(self, script: list, user_tier: str = "free", allowed_languages: list = None) -> list:
         """
         Enrich the script by pre-calculating and assigning voices and providers.
         This allows the frontend to see and edit the voice assignments.
         """
-        for segment in script:
-            text = segment["text"]
-            character = segment.get("character", "Narrator")
-            seg_type = segment["type"]
-            emotion = segment.get("emotion", "neutral")
-            gender = segment.get("gender", "male")
-            
-            # Detect language (needed for voice selection)
-            import re
-            is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
-            lang_key = "zh" if is_chinese else "en"
-            
-            # Filter Logic: Restrict to allowed_languages if provided
-            if allowed_languages and lang_key not in allowed_languages:
-                # Force assignment to an allowed language
-                if "en" in allowed_languages:
-                    lang_key = "en"
-                elif allowed_languages:
-                    lang_key = allowed_languages[0] # Fallback to first allowed
-            
-            # Check for Manual Voice Override
-            manual_voice = segment.get("voice_id")
-            if manual_voice and manual_voice != "" and isinstance(manual_voice, str) and manual_voice.strip():
-                 # 1.1 If manual voice exists and is valid, preserve it!
-                 # Still might need to set provider for metadata if missing
-                 # But we don't overwrite it with auto-assignment.
-                 pass 
-            else:
-                # 1. Determine Provider
-                provider_name = self.select_provider(seg_type, text, user_tier, emotion)
-                
-                # 2. Determine Voice ID
-                specific_voice_id = self._get_consistent_voice(character, gender, provider_name, lang=lang_key)
-                
-                # Fallback for Google/Azure if specific_voice_id is None
-                if not specific_voice_id:
-                    if provider_name == "google":
-                        voice_dict = VOICE_MAP["google"][lang_key]
-                        raw_id = voice_dict.get(gender, list(voice_dict.values())[0])
-                        specific_voice_id = f"google:{raw_id}"
-                    elif provider_name == "azure":
-                        raw_id = VOICE_MAP["azure"][lang_key]
-                        specific_voice_id = f"azure:{raw_id}"
-                    elif provider_name == "openai":
-                        specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
-
-                # 3. Write to Segment
-                segment["voice_id"] = specific_voice_id
-            
-        return script
+        return self.prepare_script(script, user_tier, allowed_languages)
 
     async def generate(self, segment: Dict, output_file: str, user_tier: str = "free", elevenlabs_key: str = None) -> None:
         text = segment["text"]
@@ -526,48 +676,9 @@ class TTSManager:
         gender = segment.get("gender", "male")
         pacing = float(segment.get("pacing", 1.0))
         
-        # 1. Try to get pre-assigned provider/voice (WYSIWYG)
-        provider_name = segment.get("provider")
-        specific_voice_id = segment.get("voice_id")
-        
-        # New: Parse namespaced ID (e.g. google:en-US-Neural2-A)
-        # This takes precedence over separate fields
-        if specific_voice_id and ":" in specific_voice_id and not provider_name:
-            p_candidate, v_candidate = specific_voice_id.split(":", 1)
-            # Basic validation to ensure it looks like a provider
-            if p_candidate in ["google", "azure", "openai", "elevenlabs"]:
-                provider_name = p_candidate
-                specific_voice_id = v_candidate
-        
-        # 2. If missing or empty, calculate them (Legacy Path / Fallback)
-        # Empty string means the frontend passed the script back without assigning a specific voice,
-        # so we must calculate a deterministic voice on the fly.
-        # 2. If missing or empty, calculate them (Legacy Path / Fallback)
-        # Empty string means the frontend passed the script back without assigning a specific voice,
-        # so we must calculate a deterministic voice on the fly.
-        if not provider_name or not specific_voice_id:
-             # Case 2a: Have voice_id but no provider (e.g. Manual Override / Review)
-             if specific_voice_id and not provider_name:
-                 # Infer provider from voice ID pattern
-                 if "Neural2" in specific_voice_id or "Wavenet" in specific_voice_id:
-                     provider_name = "google"
-                 elif "Neural" in specific_voice_id: # Azure usually ends in Neural
-                     provider_name = "azure"
-                 elif specific_voice_id in ["onyx", "alloy", "shimmer", "echo", "fable", "nova"]:
-                     provider_name = "openai"
-                 elif len(specific_voice_id) > 15: # ElevenLabs IDs are ~20 chars
-                     provider_name = "elevenlabs"
-                 else:
-                     # Fallback to default calculation if unknown
-                     pass
+        # Synthesis only accepts voices resolved during the preparation phase.
+        provider_name, specific_voice_id = self.resolve_voice(segment)
 
-             # Case 2b: Still missing provider or voice_id
-             if not provider_name or not specific_voice_id:
-                 logger.warn("Skipping generation: No voice assigned", segment_text=text[:20])
-                 return
-
-        # Determine emotion settings
-        
         # Determine emotion settings
         settings = EMOTION_SETTINGS.get(emotion.lower(), EMOTION_SETTINGS["neutral"])
         
@@ -580,43 +691,60 @@ class TTSManager:
             pacing=pacing
         )
         
-        # Execute based on provider
-        if provider_name == "azure":
-            # specific_voice_id from _get_consistent_voice might be None or correct
-            # For Azure, let's trust _get_consistent_voice returned the map value
-            if not specific_voice_id:
-                 specific_voice_id = VOICE_MAP["azure"][lang_key]
-            
-            await self.providers["azure"].generate(text, output_file, specific_voice_id, speed=pacing)
-            self._increment_usage(len(text))
-            
-        elif provider_name == "google":
-            # Ensure specific_voice_id is set (from pool)
-            if not specific_voice_id:
-                 # Fallback if hash failed
-                 voice_dict = VOICE_MAP["google"][lang_key]
-                 specific_voice_id = voice_dict.get(gender, list(voice_dict.values())[0])
-            
-            await self.providers["google"].generate(text, output_file, specific_voice_id, speed=pacing)
-            
-        elif provider_name == "openai":
-            # specific_voice_id should be 'onyx' or 'alloy'
-            if not specific_voice_id:
-                 specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
-                 
-            await self.providers["openai"].generate(text, output_file, specific_voice_id, speed=pacing)
-            
-        elif provider_name == "elevenlabs":
-            await self.providers["elevenlabs"].generate(
-                text=text,
-                output_file=output_file,
+        # Detect language
+        import re
+        is_chinese = bool(re.search(r'[\u4e00-\u9fff]', text))
+        lang_key = "zh" if is_chinese else "en"
+
+        try:
+            # Execute based on provider
+            if provider_name == "azure":
+                # specific_voice_id from _get_consistent_voice might be None or correct
+                # For Azure, let's trust _get_consistent_voice returned the map value
+                if not specific_voice_id:
+                     specific_voice_id = VOICE_MAP["azure"][lang_key]
+
+                await self.providers["azure"].generate(text, output_file, specific_voice_id, speed=pacing)
+                self._increment_usage(len(text))
+
+            elif provider_name == "google":
+                # Ensure specific_voice_id is set (from pool)
+                if not specific_voice_id:
+                     # Fallback if hash failed
+                     voice_dict = VOICE_MAP["google"][lang_key]
+                     specific_voice_id = voice_dict.get(gender, list(voice_dict.values())[0])
+
+                await self.providers["google"].generate(text, output_file, specific_voice_id, speed=pacing)
+
+            elif provider_name == "openai":
+                # specific_voice_id should be 'onyx' or 'alloy'
+                if not specific_voice_id:
+                     specific_voice_id = VOICE_MAP["openai"]["male"] if gender == "male" else VOICE_MAP["openai"]["female"]
+
+                await self.providers["openai"].generate(text, output_file, specific_voice_id, speed=pacing)
+
+            elif provider_name == "elevenlabs":
+                await self.providers["elevenlabs"].generate(
+                    text=text,
+                    output_file=output_file,
+                    voice=specific_voice_id,
+                    api_key=elevenlabs_key,
+                    settings=settings
+                )
+
+            else:
+                raise Exception(f"Unknown or unsupported provider: {provider_name}")
+        except Exception as e:
+            logger.exception(
+                "TTS provider generation failed",
+                provider=provider_name,
                 voice=specific_voice_id,
-                api_key=elevenlabs_key,
-                settings=settings
+                character=character,
+                segment_type=segment.get("type"),
+                text_snippet=text[:30],
+                error=str(e)
             )
-            
-        else:
-            raise Exception(f"Unknown or unsupported provider: {provider_name}")
+            raise
 
 
 # Singleton Manager
@@ -659,6 +787,11 @@ async def generate_segment_audio(
         user_tier=user_tier,
         elevenlabs_key=elevenlabs_api_key
     )
+
+    if not output_file.exists() or output_file.stat().st_size == 0:
+        raise RuntimeError(
+            f"TTS provider did not produce audio for character {character!r}"
+        )
     
     return str(output_file)
 
