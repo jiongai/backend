@@ -1,169 +1,208 @@
-# DramaFlow Backend 🎭
+# DramaFlow Backend
 
-AI 驱动的沉浸式多角色有声剧（AI Audio Drama）全自动生产、后期混音与字幕生成后端微服务。
+DramaFlow 是一个将**结构化剧本**转换为多角色有声剧的 FastAPI 后端。它负责音色分配、多云 TTS 调度、音频拼接、SRT 字幕与时间轴生成，以及 Cloudflare R2 文件生命周期管理。
 
----
+> 当前服务不负责把小说原文分析成剧本；调用方需要提供由 `narration` 和 `dialogue` 片段组成的结构化 JSON。
 
-## 🌟 核心特性
+## 核心能力
 
-- 🎙️ **多云混合 TTS 智能路由 (Hybrid TTS Routing)**：
-  - **Basic (免费/标准)**：采用 **Google Cloud TTS**（丰富角色音色池）与 **Azure Speech**（月度 50 万字符配额监控与自动降级保障）。
-  - **Advance (VIP/高保真)**：采用 **ElevenLabs**（拟真音色 + 细粒度情感参数动态注入）与 **OpenAI TTS**（高质感旁白）。
-- 🎭 **确定性角色音色绑定 (Deterministic Voice Mapping)**：
-  - 基于角色名哈希映射算法，确保同一角色在全剧任意章节的音色严格一致，避免配音跳戏。
-- 📖 **旁白强一致性与语种自适应 (Narrator Invariance)**：
-  - 自动检测剧本文本语言（中文/英文），独立锁定旁白声音，彻底剥离上下文角色性别属性对旁白音色的干扰。
-- 🎛️ **广播剧级数字音频后期 (Post-Production Engine)**：
-  - **停顿控制**：自动在对话与旁白片段间插入 300ms 黄金戏剧静音间隙（`silence_gap`）。
-  - **语速调节**：支持 0.25x - 4.0x `pacing`，由各 TTS 供应商在合成阶段原生处理，避免后期二次变速。
-  - **高保真输出**：统一输出 192kbps 广播级 MP3 音轨。
-- 📝 **毫秒级精确对齐字幕 (Synchronized SRT & Timeline)**：
-  - 合成过程中实时计算每一句台词的精确起止时间戳，同步产出标准 `.srt` 字幕文件与前端高亮播放所需的 `timeline` 时间轴索引。
-- ☁️ **云端对象存储与生命周期管理 (Storage & Lifecycle Engine)**：
-  - 原生集成 **Cloudflare R2**（S3 兼容协议），实现 `temp`（临时预览）与 `saved`（正式归档）状态隔离流转，采用 Copy-on-Write 重新分发 UUID 防并发污染。
-- 🛡️ **生产级可观测性与安全防御**：
-  - 集成 `CorrelationIdMiddleware` + `structlog` 全链路请求追踪，支持 `X-Access-Secret` 访问安全鉴权与 Serverless / 容器化环境下的 ffmpeg 自动探测。
+- 多供应商 TTS：Google Cloud TTS、Azure Speech、OpenAI TTS、ElevenLabs。
+- 分层路由：免费对白默认使用 Google，VIP 对白默认使用 ElevenLabs；旁白根据用户等级、供应商可用性与 Azure 月度额度选择。
+- 自动补齐音色：`/synthesize` 可以直接接收空 `voice_id`，后端会在合成前完成分配。
+- 旁白强一致性：整份剧本只使用一个旁白声音，并统一旁白的角色名和性别字段。
+- 确定性角色选角：根据角色名哈希选择声音，同一角色在相同音色池中保持一致。
+- 供应商原生语速：`pacing` 范围为 `0.25`～`4.0`，只在 TTS 阶段处理，不在后期重复变速。
+- 音频后期：片段间插入 300ms 静音，最终输出 192kbps MP3、SRT 和毫秒级 `timeline`。
+- R2 生命周期：生成文件先进入 `temp`，随后可保存到 `saved`、移回 `temp` 或永久删除。
+- 安全与可观测性：共享密钥鉴权、请求 ID、结构化日志、凭证脱敏、生产环境安全失败策略。
 
----
+## 处理流程
 
-## 🚀 快速开始
-
-### 1. 环境准备与虚拟环境
-
-```bash
-# 克隆仓库
-cd DramaFlow
-
-# 创建 Python 3.10+ 虚拟环境
-python3 -m venv venv
-
-# 激活虚拟环境
-source venv/bin/activate  # macOS / Linux
-# 或 Windows: venv\Scripts\activate
+```text
+结构化剧本
+    ↓
+校验片段字段并补齐 voice_id
+    ↓
+按 voice_id 检查实际需要的供应商凭证
+    ↓
+并发生成旁白和对白 MP3
+    ↓
+拼接音频 + 300ms 间隔 + SRT + timeline
+    ↓
+上传到 Cloudflare R2 的 temp 目录
+    ↓
+返回 audio_url、srt_url 和 timeline
 ```
 
-### 2. 安装依赖
+## 快速开始
+
+### 1. 准备环境
+
+建议使用 Python 3.12，并确保系统已安装 ffmpeg。
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **环境说明**：系统依赖 `ffmpeg` 进行音频合成与格式转换。请确保运行环境中已安装 ffmpeg（如 macOS 执行 `brew install ffmpeg`，Ubuntu 执行 `apt-get install ffmpeg`）。对于 Railway/Lambda 部署，系统已内置路径探测。
+macOS 可通过 `brew install ffmpeg` 安装 ffmpeg。Railway 部署会根据 `nixpacks.toml` 自动安装 Python 3.12 和 ffmpeg。
 
-### 3. 配置环境变量
-
-从模版复制配置文件并填入相应 API Key：
+### 2. 配置环境变量
 
 ```bash
 cp env.template .env
 ```
 
-核心配置项包括：
-- `ENVIRONMENT`：运行环境；生产环境设置为 `production`
-- `DARMAFLOW_API_ACCESS_SECRET`：API 访问鉴权密钥；生产环境必须设置且不能使用模板占位值
-- `CORS_ALLOWED_ORIGINS`：允许访问 API 的浏览器来源白名单，多个来源用逗号分隔
-- `LOG_FORMAT` 与 `LOG_LEVEL`：日志格式（`console`/`json`）和级别
-- `ELEVENLABS_API_KEY`：ElevenLabs 语音合成密钥
-- `GOOGLE_APPLICATION_CREDENTIALS_JSON` 或 `GOOGLE_APPLICATION_CREDENTIALS`：Google TTS 服务账号凭证
-- `AZURE_SPEECH_KEY` 与 `AZURE_SPEECH_REGION`：Azure 语音服务
-- `OPENAI_API_KEY`：OpenAI 语音服务
-- `R2_*`：Cloudflare R2 存储桶连接参数
+本地开发至少需要配置准备使用的 TTS 供应商。完整合成还需要配置 Cloudflare R2：
 
-受保护接口缺少 `X-Access-Secret` 时返回 `401`，密钥错误返回 `403`。生产环境若没有正确配置服务端访问密钥，则返回 `503`，不会自动降级为公开访问。
+```dotenv
+ENVIRONMENT=development
+PORT=8000
+DARMAFLOW_API_ACCESS_SECRET=replace-with-a-random-secret
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
 
-### 4. 启动服务
+# 至少配置实际使用的 TTS 供应商
+GOOGLE_APPLICATION_CREDENTIALS_JSON={...}
+# AZURE_SPEECH_KEY=...
+# AZURE_SPEECH_REGION=eastus
+# OPENAI_API_KEY=...
+# ELEVENLABS_API_KEY=...
+
+R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET_NAME=dramaflow
+R2_PUBLIC_DOMAIN=https://cdn.example.com
+R2_PROJECT_ID=DramaFlowProduction
+```
+
+生产环境必须设置：
+
+```dotenv
+ENVIRONMENT=production
+DARMAFLOW_API_ACCESS_SECRET=<strong-random-secret>
+CORS_ALLOWED_ORIGINS=https://app.example.com
+LOG_FORMAT=json
+LOG_LEVEL=INFO
+```
+
+生产环境缺少有效访问密钥时，受保护接口返回 `503 authentication_not_configured`，不会自动开放访问。
+
+### 3. 启动服务
 
 ```bash
-# 本地开发模式（热重载）
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-# 或使用启动脚本
+也可以运行：
+
+```bash
 ./run.sh
 ```
 
-服务就绪后，可在浏览器访问：`http://localhost:8000/docs` 查看交互式 Swagger API 文档。
+启动后可访问：
 
-### 5. 运行单元测试
+- Swagger UI：`http://localhost:8000/docs`
+- OpenAPI JSON：`http://localhost:8000/openapi.json`
+- 健康检查：`http://localhost:8000/health`
+
+### 4. 运行测试
 
 ```bash
 python -m unittest discover -v
 ```
 
-测试使用临时文件和 mock TTS/R2 客户端，不会调用真实云服务或消耗供应商额度。
+单元测试使用临时文件和 mock 客户端，不会调用真实 TTS 或 R2 服务。目前覆盖请求校验、旁白一致性、供应商凭证检查、原生语速、MP3 格式、时间轴、鉴权、日志脱敏和存储 URL 安全等行为。
 
----
+`test_api.py` 是针对已启动服务的连通性脚本，其中 `/review` 会调用真实 TTS；使用前请确认凭证和调用成本。
 
-## 📡 核心 API 端点概览
+## API 概览
 
-详细请求参数与返回结构请参考 [API_DOCS.md](file:///Users/baojiong/My%20Projects/AIAudioDrarm/DramaFlow/API_DOCS.md)。
+除 `/` 和 `/health` 外，所有业务接口都需要 `X-Access-Secret`。
 
-| 方法 | 路径 | 描述 | 鉴权要求 |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/health` | 服务健康检查与 API Key 就绪状态 | 无 |
-| `GET` | `/voices` | 获取当前支持的全部声音目录、情感参数与试听样本（支持语言过滤） | `X-Access-Secret` |
-| `POST` | `/assign_voices` | 根据角色名与语种自动为结构化剧本分配声音 ID（前端 Magic Fill） | `X-Access-Secret` |
-| `POST` | `/synthesize` | **核心**：根据剧本结构并发合成音频剧，输出 MP3/SRT 并上传 R2 | `X-Access-Secret` |
-| `POST` | `/review` | 单条台词声音试听与参数预览（返回实时 MP3 音频流） | `X-Access-Secret` |
-| `POST` | `/save_files` | 将生成的文件从 `temp` 正式保存/移动至 `saved` 归档目录 | `X-Access-Secret` |
-| `POST` | `/move_files_to_temp` | 将已归档的文件移回 `temp` 临时目录（重新受制于过期策略） | `X-Access-Secret` |
-| `POST` | `/del_files` | 从云存储中物理删除指定的音频与字幕文件 | `X-Access-Secret` |
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/` | 服务元数据 |
+| `GET` | `/health` | 进程存活与部分配置状态 |
+| `GET` | `/voices` | 获取音色目录、情绪参数和试听样例 |
+| `POST` | `/assign_voices` | 预先为剧本分配音色，供前端展示和修改 |
+| `POST` | `/synthesize` | 自动准备剧本、生成 MP3/SRT 并上传 R2 |
+| `POST` | `/review` | 返回单句 MP3 试听流 |
+| `POST` | `/save_files` | 将 `temp` 文件移动到 `saved` |
+| `POST` | `/move_files_to_temp` | 将 `saved` 文件移回 `temp` |
+| `POST` | `/del_files` | 永久删除一个或一对文件 |
 
----
+详细请求结构、状态码和示例见 [API_DOCS.md](API_DOCS.md)。Railway 上线说明见 [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md)。
 
-## 🛠️ 项目架构
+## TTS 路由规则
 
-```
-DramaFlow/
-├── app/
-│   ├── main.py                  # FastAPI 应用工厂、中间件与路由装配
-│   ├── api/
-│   │   ├── dependencies.py      # 鉴权与共享请求依赖
-│   │   ├── errors.py            # 统一错误响应
-│   │   ├── schemas.py           # API 请求与响应模型
-│   │   └── routes/
-│   │       ├── system.py        # 根路径与健康检查
-│   │       ├── voices.py        # 音色目录、分配与试听
-│   │       ├── synthesis.py     # 完整音频剧合成
-│   │       └── storage.py       # R2 文件生命周期接口
-│   ├── config/
-│   │   ├── voices.json          # 声音池配置、多语言映射与情感超参数字典
-│   │   └── avatar_map.json      # 声音对应的头像静态映射
-│   ├── core/
-│   │   ├── settings.py          # 类型化环境配置的唯一入口
-│   │   ├── runtime.py           # ffmpeg 等运行环境初始化
-│   │   └── logging.py           # structlog 结构化日志与敏感信息脱敏
-│   └── services/
-│       ├── synthesizer.py       # 剧本级业务编排器（并发度控制、全阶段流水线调度）
-│       ├── audio_engine.py      # TTS 路由决策、配额降级监控与哈希选角引擎
-│       ├── tts_providers.py     # 旧导入路径的兼容门面
-│       ├── tts/
-│       │   ├── base.py          # 供应商统一接口
-│       │   ├── registry.py      # 供应商注册与构造
-│       │   ├── azure.py         # Azure Speech 适配器
-│       │   ├── google.py        # Google Cloud TTS 适配器
-│       │   ├── openai.py        # OpenAI TTS 适配器
-│       │   └── elevenlabs.py    # ElevenLabs 适配器
-│       ├── post_production.py   # 数字音频拼接、静音缝隙、MP3 导出与 SRT 运算
-│       └── storage.py           # Cloudflare R2 对象存储生命周期与 Copy-on-Write 管理
-├── env.template                 # 环境变量模板
-├── requirements.txt             # 项目依赖清单
-├── test_api.py                  # API 自动化回归测试套件
-└── test_narrator_consistency.py # 旁白声音一致性验证脚本
+| 内容 | `free` | `vip` |
+| --- | --- | --- |
+| 对白 | Google | ElevenLabs |
+| 旁白 | Azure（已配置且额度允许）→ Google → OpenAI | OpenAI → Azure → Google |
+
+显式提供的 `voice_id` 优先于自动路由。请求只检查最终剧本实际引用的供应商，因此纯 Google 请求不需要 ElevenLabs Key。
+
+`X-User-Tier` 当前是受信任的调用方 Header。生产环境应由后端网关或可信服务设置，不应允许普通客户端任意伪造。
+
+## 剧本片段约束
+
+```json
+{
+  "type": "dialogue",
+  "text": "Did you hear that?",
+  "character": "Alice",
+  "gender": "female",
+  "emotion": "fearful",
+  "pacing": 1.1,
+  "voice_id": "google:en-US-Neural2-F"
+}
 ```
 
----
+- `type`：`narration` 或 `dialogue`。
+- `text`：1～5000 字符。
+- `character`：1～100 字符；旁白在准备阶段统一为 `Narrator`。
+- `gender`：`male`、`female` 或 `neutral`。
+- `emotion`：`neutral`、`happy`、`sad`、`angry`、`fearful`、`surprised`、`whispering`、`shouting`。
+- `pacing`：`0.25`～`4.0`。
+- `voice_id`：推荐使用 `provider:voice` 格式；空字符串表示自动分配。
 
-## ⚙️ 进阶配置与声音扩展
+每个请求最多包含 1000 个片段。若旁白片段提供多个不同的手动声音，接口返回 422。
 
-若需扩展音色库、添加新语种或调整情感参数，请直接编辑 [`app/config/voices.json`](file:///Users/baojiong/My%20Projects/AIAudioDrarm/DramaFlow/app/config/voices.json)，无需改动业务代码：
-- `VOICE_MAP`：维护各供应商（Google / ElevenLabs / Azure / OpenAI）的音色池与默认发音人。
-- `EMOTION_SETTINGS`：配置不同情感（如 happy, angry, sad, whispering 等）的 stability、similarity_boost 和 style 参数。
-- `VOICE_LABELS`：配置在前端展示的友好名称。
+## 项目结构
 
-声音映射详情请查阅 [VOICES.md](file:///Users/baojiong/My%20Projects/AIAudioDrarm/DramaFlow/VOICES.md)。
+```text
+app/
+├── main.py                  # 应用工厂、中间件和路由装配
+├── api/
+│   ├── dependencies.py      # 鉴权与语言规范化
+│   ├── errors.py            # 稳定错误响应
+│   ├── schemas.py           # API 请求/响应模型
+│   └── routes/              # system、voices、synthesis、storage
+├── models/script.py         # 严格的剧本片段模型
+├── core/
+│   ├── settings.py          # 集中式环境配置
+│   ├── runtime.py           # ffmpeg 初始化
+│   └── logging.py           # 结构化日志与脱敏
+├── config/
+│   ├── voices.json          # 音色池、标签、情绪参数
+│   └── avatar_map.json      # 音色头像映射
+└── services/
+    ├── audio_engine.py      # 音色分配、供应商路由和凭证检查
+    ├── synthesizer.py       # 合成流水线编排
+    ├── post_production.py   # 拼接、MP3、SRT、timeline
+    ├── storage.py           # R2 URL 校验和文件生命周期
+    └── tts/                 # 四个 TTS 供应商适配器与注册表
+```
 
----
+## 音色扩展
 
-## 📄 开源许可
+编辑 [app/config/voices.json](app/config/voices.json) 可以扩展音色池、展示名称和 ElevenLabs 情绪参数；编辑 [app/config/avatar_map.json](app/config/avatar_map.json) 可以绑定头像。更多说明见 [VOICES.md](VOICES.md) 和 [VOICE_FLOW.txt](VOICE_FLOW.txt)。
 
-本项目遵循 MIT 协议。
+## 当前边界
+
+- 不包含小说原文分析或自动生成结构化剧本的接口。
+- `/health` 是存活探针，不会主动连接所有外部供应商或 R2。
+- 合成是同步 HTTP 请求；长剧本应由调用方设置合理超时。
+- `audio_duration_ms` 当前保留在响应模型中，但尚未填充。

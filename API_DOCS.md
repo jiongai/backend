@@ -1,66 +1,228 @@
 # DramaFlow API 接口文档
 
-本文档详细规范了 DramaFlow 后端微服务提供的所有 RESTful API 接口。
+DramaFlow API 接收结构化剧本，完成音色准备、TTS 合成、音频后期、字幕生成和 Cloudflare R2 文件管理。
 
----
+本地 Base URL：
 
-## 目录
+```text
+http://localhost:8000
+```
 
-1. [通用说明与鉴权规范](#1-通用说明与鉴权规范)
-2. [核心合成与剧本编排](#2-核心合成与剧本编排)
-   - [2.1 POST /assign_voices (智能分配声音)](#21-post-assign_voices-智能分配声音)
-   - [2.2 POST /synthesize (完整音频剧合成)](#22-post-synthesize-完整音频剧合成)
-3. [文件存储与生命周期管理 (Cloudflare R2)](#3-文件存储与生命周期管理-cloudflare-r2)
-   - [3.1 POST /save_files (固化保存文件)](#31-post-save_files-固化保存文件)
-   - [3.2 POST /move_files_to_temp (移回临时存储)](#32-post-move_files_to_temp-移回临时存储)
-   - [3.3 POST /del_files (物理删除文件)](#33-post-del_files-物理删除文件)
-4. [声音配置与辅助调试](#4-声音配置与辅助调试)
-   - [4.1 GET /voices (获取声音目录与情感配置)](#41-get-voices-获取声音目录与情感配置)
-   - [4.2 POST /review (单句音色快速试听)](#42-post-review-单句音色快速试听)
-   - [4.3 GET /health (服务健康与密钥检查)](#43-get-health-服务健康与密钥检查)
-   - [4.4 GET / (基础运行状态)](#44-get--基础运行状态)
+交互式文档：
 
----
+```text
+GET /docs
+GET /openapi.json
+```
 
-## 1. 通用说明与鉴权规范
+## 1. 通用约定
 
-- **Base URL**: `http://localhost:8000` (本地开发) 或生产部署地址
-- **响应格式**: `application/json` (部分试听流为 `audio/mpeg`)
+### 1.1 鉴权
 
-### 公共 Request Headers
+除 `GET /` 和 `GET /health` 外，所有接口都需要：
 
-| Header 名 | 类型 | 必填 | 说明 | 示例 |
-| :--- | :--- | :--- | :--- | :--- |
-| `X-Access-Secret` | string | 是（受保护接口） | 后端全局安全访问密钥。生产环境必须配置 `DARMAFLOW_API_ACCESS_SECRET`，服务端使用常量时间比较验证。 | `Bao32db04...` |
-| `X-User-Tier` | string | 否 | 用户等级。`free` (默认) 或 `vip`。直接决定 TTS 混合路由策略。 | `free` / `vip` |
-| `X-ElevenLabs-API-Key` | string | 否 | 仅当最终剧本使用 ElevenLabs 音色时需要。可覆盖服务器默认配置（按请求计费归属）。 | `xi-...` |
-| `X-Correlation-ID` | string | 否 | 请求链路追踪 ID。未提供时系统自动生成 UUID。 | `b8e4f1a2-...` |
+```http
+X-Access-Secret: <DARMAFLOW_API_ACCESS_SECRET>
+```
 
-鉴权失败状态码：缺少访问密钥返回 `401`，密钥错误返回 `403`；生产环境未配置密钥或仍使用模板占位值时返回 `503 authentication_not_configured`。仅非生产开发环境允许不配置访问密钥。
+鉴权结果：
 
-未捕获的服务端错误只返回稳定错误码和 `request_id`，不会向客户端返回供应商响应、凭证、堆栈或本地文件路径。
+| 状态码 | 含义 |
+| --- | --- |
+| `401` | 服务端已配置密钥，但请求未提供 `X-Access-Secret` |
+| `403` | 请求密钥不正确 |
+| `503` | 生产环境未配置有效的服务端访问密钥 |
 
----
+非生产环境允许不配置访问密钥。生产环境设置 `ENVIRONMENT=production` 后会采用安全失败策略。
 
-## 2. 核心合成与剧本编排
+### 1.2 公共 Header
 
-### 2.1 POST `/assign_voices` (智能分配声音)
+| Header | 是否必需 | 说明 |
+| --- | --- | --- |
+| `X-Access-Secret` | 受保护接口必需 | 共享 API 访问密钥 |
+| `X-User-Tier` | 否 | `free` 或 `vip`，默认 `free` |
+| `X-ElevenLabs-API-Key` | 否 | 仅 `/synthesize` 和 `/review` 使用，可覆盖服务端 ElevenLabs Key |
+| `X-Request-ID` | 否 | UUID4 请求 ID；缺失或无效时由中间件生成 |
 
-根据角色名、性别与语言，利用确定性哈希算法为结构化剧本中的各个片段预分配合适的 Voice ID。前端通常在“智能配音/Magic Fill”功能中调用此接口，获取声音建议后再允许用户微调。
+`X-User-Tier` 应由可信网关或服务端调用方设置。它直接影响自动音色路由和供应商成本。
 
-- **URL**: `/assign_voices`
-- **Method**: `POST`
-- **Query Parameters**:
-  - `languages` (可选，可多次传递): 限制声音分配的语种范围（如 `?languages=en&languages=zh`）。不传时默认限制为 `en`。
+### 1.3 剧本片段模型
 
-#### 请求体 (Body - JSON)
+`/assign_voices` 和 `/synthesize` 使用同一套严格模型：
+
+```json
+{
+  "type": "dialogue",
+  "text": "Did you hear that?",
+  "character": "Alice",
+  "gender": "female",
+  "emotion": "fearful",
+  "pacing": 1.1,
+  "voice_id": "google:en-US-Neural2-F"
+}
+```
+
+| 字段 | 类型 | 必需 | 约束 |
+| --- | --- | --- | --- |
+| `type` | string | 是 | `narration` 或 `dialogue` |
+| `text` | string | 是 | 去除首尾空白后长度为 1～5000 |
+| `character` | string | 是 | 长度为 1～100；旁白准备后统一为 `Narrator` |
+| `gender` | string | 是 | `male`、`female`、`neutral` |
+| `emotion` | string | 否 | 默认 `neutral`；支持 8 种情绪 |
+| `pacing` | number | 否 | 默认 `1.0`，范围 `0.25`～`4.0` |
+| `voice_id` | string | 否 | 默认空字符串；最大 128 字符 |
+| `provider` | string/null | 否 | 仅用于兼容旧客户端的原始 voice ID |
+
+支持的情绪：
+
+```text
+neutral, happy, sad, angry, fearful, surprised, whispering, shouting
+```
+
+推荐始终使用命名空间音色：
+
+```text
+google:en-US-Neural2-F
+azure:zh-CN-YunxiNeural
+openai:onyx
+elevenlabs:pNInz6obpgDQGcFmaJgB
+```
+
+旧客户端仍可传原始 ID，后端会通过 `provider` 或 ID 特征推断供应商；新客户端不应依赖该推断。
+
+### 1.4 通用错误
+
+请求模型校验失败时返回 FastAPI 标准 `422`。业务内部错误使用稳定结构，不会暴露供应商响应、堆栈、凭证或本地路径：
+
+```json
+{
+  "detail": {
+    "code": "synthesis_failed",
+    "message": "The request could not be completed",
+    "request_id": "4b36c90c..."
+  }
+}
+```
+
+常见状态码：
+
+| 状态码 | 场景 |
+| --- | --- |
+| `400` | R2 URL、文件组合或生命周期状态不合法 |
+| `401` / `403` | 访问密钥缺失或错误 |
+| `422` | 请求字段不合法、音色无法解析或旁白音色冲突 |
+| `503` | 鉴权未配置或实际需要的 TTS 供应商未配置 |
+| `500` | TTS、后期、上传或其他内部错误 |
+
+## 2. 系统接口
+
+### 2.1 `GET /`
+
+无需鉴权。返回服务元数据：
+
+```json
+{
+  "service": "DramaFlow API",
+  "status": "running",
+  "version": "1.0.0"
+}
+```
+
+### 2.2 `GET /health`
+
+无需鉴权。用于 Railway 或负载均衡器的存活探针：
+
+```json
+{
+  "status": "healthy",
+  "openrouter_configured": false,
+  "elevenlabs_configured": true
+}
+```
+
+该接口只表示应用进程能够响应，并展示两个兼容性配置标志；它不会主动连接 TTS 供应商、ffmpeg 或 R2。
+
+## 3. 音色接口
+
+### 3.1 `GET /voices`
+
+返回前端可展示的 Basic/Advance 音色、情绪参数和试听样例。
+
+查询参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `languages` | string[] | 可重复传入；支持 `en`、`zh` 及 `en-US`、`zh-CN`、`zh-TW`、`cn` 等别名 |
+
+未传入时默认返回英文音色：
+
+```http
+GET /voices?languages=en&languages=zh
+```
+
+响应结构：
+
+```json
+{
+  "voice_map": {
+    "Basic": {
+      "en": {
+        "male": {
+          "id": "google:en-US-Neural2-J",
+          "name": "Michael (Energetic)",
+          "avatar_url": "r2.fictalk.com/voice-avatars/en-US-Neural2-J.jpeg"
+        },
+        "female": {
+          "id": "google:en-US-Neural2-F",
+          "name": "Jennifer (Warm)",
+          "avatar_url": "r2.fictalk.com/voice-avatars/en-US-Neural2-F.png"
+        }
+      },
+      "pool": {}
+    },
+    "Advance": {
+      "male": {
+        "id": "elevenlabs:pNInz6obpgDQGcFmaJgB",
+        "name": "Adam (Deep)",
+        "avatar_url": "r2.fictalk.com/voice-avatars/pNInz6obpgDQGcFmaJgB.png"
+      },
+      "pool": {}
+    }
+  },
+  "emotion_settings": {
+    "neutral": {
+      "stability": 0.6,
+      "similarity_boost": 0.75,
+      "style": 0.0
+    }
+  },
+  "samples": {
+    "openai": {
+      "onyx": "https://cdn.openai.com/API/docs/audio/onyx.wav"
+    }
+  }
+}
+```
+
+### 3.2 `POST /assign_voices`
+
+在不生成音频的情况下，为空 `voice_id` 自动分配音色。常用于前端 Magic Fill。
+
+```http
+POST /assign_voices?languages=en&languages=zh
+X-Access-Secret: ...
+X-User-Tier: free
+Content-Type: application/json
+```
+
+请求：
 
 ```json
 {
   "script": [
     {
       "type": "narration",
-      "text": "清晨的微风穿过树林，带来了一丝凉意。",
+      "text": "清晨的微风穿过树林。",
       "character": "Narrator",
       "gender": "neutral",
       "emotion": "neutral",
@@ -80,7 +242,7 @@
 }
 ```
 
-#### 响应体 (Response - JSON)
+响应示例中的具体音色取决于用户等级、供应商配置和音色池：
 
 ```json
 {
@@ -88,7 +250,7 @@
   "script": [
     {
       "type": "narration",
-      "text": "清晨的微风穿过树林，带来了一丝凉意。",
+      "text": "清晨的微风穿过树林。",
       "character": "Narrator",
       "gender": "neutral",
       "emotion": "neutral",
@@ -112,23 +274,50 @@
 }
 ```
 
----
+行为说明：
 
-### 2.2 POST `/synthesize` (完整音频剧合成)
+- 所有旁白共用一个声音，并统一为 `character=Narrator`、`gender=neutral`。
+- 一个旁白片段提供手动 `voice_id` 时，该声音传播到全部旁白。
+- 多个旁白片段提供不同手动声音时返回 `422`。
+- 对白的手动 `voice_id` 会被保留。
+- 同名对白角色通过确定性哈希获得稳定声音。
 
-核心业务接口。根据输入的结构化剧本并发调用各 TTS 引擎生成 MP3 语音，`pacing` 由对应 TTS 供应商在合成阶段原生处理。后期流水线只执行**插入 300ms 黄金静音间隙 -> 音轨混音导出 -> 生成标准 SRT 字幕与 Timeline 时间轴 -> 上传至 Cloudflare R2**，不再对已合成音频二次变速。
+### 3.3 `POST /review`
 
-- **URL**: `/synthesize`
-- **Method**: `POST`
+生成一条短试听并直接返回 MP3 文件流。
 
-#### 请求参数 (Body - JSON)
+请求：
 
-| 字段名 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `script` | array[object] | 是 | 结构化剧本片段列表。空 `voice_id` 会在合成前自动补齐；有效的 `voice_id`（如 `"google:en-US-Neural2-J"` 或 `"elevenlabs:pNInz6obpgDQGcFmaJgB"`）会被保留。所有旁白必须使用同一音色：只指定一个旁白音色时会传播至全部旁白，指定多个不同旁白音色时返回 422。 |
-| `limit` | integer | 否 | 合成片段数量限制。<br>• `null`/不填: 合成全部片段<br>• `>0`: 截取前 N 个片段合成（用于快速试听测试）<br>• `0`: 跳过合成直接返回 |
+```json
+{
+  "text": "Hello, this is a preview.",
+  "voice_id": "google:en-US-Neural2-J",
+  "pacing": 1.0,
+  "emotion": "neutral"
+}
+```
 
-#### 请求体示例
+限制：
+
+- `text` 接受 1～100 字符，实际只合成前 30 个字符。
+- `voice_id` 必须能够解析到受支持的供应商。
+- `pacing` 范围为 `0.25`～`4.0`。
+- 引用了未配置的供应商时返回 `503 tts_provider_not_configured`。
+
+成功响应：
+
+```http
+Content-Type: audio/mpeg
+Content-Disposition: attachment; filename="preview.mp3"
+```
+
+## 4. 合成接口
+
+### 4.1 `POST /synthesize`
+
+合成完整有声剧。该接口会先自动准备剧本，因此不要求调用方提前调用 `/assign_voices`。
+
+请求：
 
 ```json
 {
@@ -140,128 +329,145 @@
       "gender": "neutral",
       "emotion": "neutral",
       "pacing": 1.0,
-      "voice_id": "google:en-US-Neural2-J"
+      "voice_id": ""
     },
     {
       "type": "dialogue",
-      "text": "Did you hear that noise?",
+      "text": "Did you hear that?",
       "character": "David",
       "gender": "male",
       "emotion": "fearful",
       "pacing": 1.1,
-      "voice_id": "elevenlabs:pNInz6obpgDQGcFmaJgB"
+      "voice_id": "google:en-US-Neural2-J"
     }
   ],
   "limit": null
 }
 ```
 
-#### 响应体 (Response - JSON)
+顶层字段：
+
+| 字段 | 类型 | 必需 | 说明 |
+| --- | --- | --- | --- |
+| `script` | array | 是 | 1～1000 个严格校验的剧本片段 |
+| `limit` | integer/null | 否 | `null` 合成全部，正整数合成前 N 段，`0` 只做跳过响应 |
+
+处理规则：
+
+1. 截取 `limit` 指定的片段。
+2. 补齐空音色，并保证旁白全剧一致。
+3. 根据最终 `voice_id` 计算实际需要的供应商。
+4. 只检查这些供应商的凭证；纯 Google 请求不需要 ElevenLabs Key。
+5. 并发生成旁白和对白；对白并发上限为 3。
+6. 按原剧本顺序拼接，每段之间插入 300ms 静音。
+7. 输出 192kbps MP3、SRT 和 `timeline`。
+8. 将 MP3/SRT 上传至 R2 的 `temp` 目录。
+
+响应：
 
 ```json
 {
   "message": "Synthesis successful",
   "segments_count": 2,
   "audio_duration_ms": null,
-  "audio_url": "https://pub-xxx.r2.dev/projects/DramaFlow/temp/3a4b9c1d-8e7f-4a0b-bcde-1234567890ab.mp3",
-  "srt_url": "https://pub-xxx.r2.dev/projects/DramaFlow/temp/3a4b9c1d-8e7f-4a0b-bcde-1234567890ab.srt",
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/temp/3a4b9c1d.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/temp/3a4b9c1d.srt",
   "timeline": [
-    {
-      "index": 1,
-      "start": 0,
-      "end": 3200
-    },
-    {
-      "index": 2,
-      "start": 3500,
-      "end": 5800
-    }
+    {"index": 1, "start": 0, "end": 3200},
+    {"index": 2, "start": 3500, "end": 5800}
   ]
 }
 ```
 
-> [!NOTE]
-> `audio_url` 与 `srt_url` 初始生成在 `temp/` 临时目录下。若需要长久保存，请调用 `/save_files` 固化归档。
+`audio_duration_ms` 当前为保留字段，尚未填充。音频总时长可以从最后一个 timeline 项的 `end` 推导。
 
-供应商凭证按最终剧本实际引用的音色检查：纯 Google/Azure/OpenAI 请求不要求 ElevenLabs Key。请求引用了未配置的供应商时返回 `503`，音色无法解析或旁白音色冲突时返回 `422`。
-
----
-
-## 3. 文件存储与生命周期管理 (Cloudflare R2)
-
-### 3.1 POST `/save_files` (固化保存文件)
-
-将生成的音频和字幕文件转正保存：
-- **来源为 `temp`**: 执行 Copy-on-Write 分配全新独立 UUID 并删除临时源文件，移入 `saved/` 目录。
-- **来源已在 `saved`**: 幂等返回原有规范 URL，不重复复制。
-
-所有文件生命周期接口都只接受 `R2_PUBLIC_DOMAIN` 配置域名下的规范 URL，路径必须符合 `projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}`。外部域名、协议降级、查询参数、URL 片段、编码路径、错误扩展名、跨项目或跨目录的音频/字幕组合都会在执行 R2 操作前被拒绝。
-
-- **URL**: `/save_files`
-- **Method**: `POST`
-
-#### 请求参数 (Body - JSON)
-
-| 字段名 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `audio_url` | string | 是 | 当前音频文件完整 URL（支持 temp 或 saved） |
-| `srt_url` | string | 是 | 当前字幕文件完整 URL（支持 temp 或 saved） |
-
-#### 响应体 (Response - JSON)
+`limit=0` 时仍会校验请求模型，但不会检查供应商凭证、调用 TTS、执行后期或访问 R2：
 
 ```json
 {
-  "audio_url": "https://pub-xxx.r2.dev/projects/DramaFlow/saved/8f6e4d2c-1b0a-4c9d-8e7f-9876543210fe.mp3",
-  "srt_url": "https://pub-xxx.r2.dev/projects/DramaFlow/saved/8f6e4d2c-1b0a-4c9d-8e7f-9876543210fe.srt"
+  "message": "Synthesis skipped (limit=0)",
+  "segments_count": 0,
+  "audio_duration_ms": null,
+  "audio_url": null,
+  "srt_url": null,
+  "timeline": null
 }
 ```
 
----
+## 5. R2 文件生命周期
 
-### 3.2 POST `/move_files_to_temp` (移回临时存储)
+所有文件接口只接受 `R2_PUBLIC_DOMAIN` 下的规范 URL：
 
-将已归档在 `saved/` 目录下的文件移回 `temp/` 临时目录（生成全新 UUID 并删除旧文件），使其重新受制于临时文件的生命周期清理规则。
+```text
+projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}
+```
 
-- **URL**: `/move_files_to_temp`
-- **Method**: `POST`
+以下 URL 会在访问 R2 前被拒绝：
 
-#### 请求体 (Body - JSON)
+- 外部域名或不同协议。
+- 包含用户名、密码、查询参数或 URL fragment。
+- URL 编码路径、反斜线或非规范路径。
+- `temp` / `saved` 以外的目录。
+- MP3/SRT 扩展名错误。
+- 音频和字幕来自不同项目或不同目录。
+
+### 5.1 `POST /save_files`
+
+将文件保存到 `saved`：
+
+- 来源为 `temp`：分别复制到新的 `saved` UUID，然后删除临时源文件。
+- 来源为 `saved`：幂等返回原 URL，不创建副本。
+
+请求：
 
 ```json
 {
-  "audio_url": "https://pub-xxx.r2.dev/projects/DramaFlow/saved/xxx.mp3",
-  "srt_url": "https://pub-xxx.r2.dev/projects/DramaFlow/saved/xxx.srt"
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/temp/source.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/temp/source.srt"
 }
 ```
 
-#### 响应体 (Response - JSON)
+响应：
 
 ```json
 {
-  "audio_url": "https://pub-xxx.r2.dev/projects/DramaFlow/temp/new_uuid.mp3",
-  "srt_url": "https://pub-xxx.r2.dev/projects/DramaFlow/temp/new_uuid.srt"
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/saved/audio-uuid.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/saved/srt-uuid.srt"
 }
 ```
 
----
+### 5.2 `POST /move_files_to_temp`
 
-### 3.3 POST `/del_files` (物理删除文件)
+将一对 `saved` 文件分别移动到新的 `temp` UUID，并删除原文件。
 
-从云存储桶中永久删除指定的一个或多个音频/字幕文件。
+```json
+{
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/saved/audio-id.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/saved/srt-id.srt"
+}
+```
 
-- **URL**: `/del_files`
-- **Method**: `POST`
+响应：
 
-#### 请求参数 (Body - JSON)
+```json
+{
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/temp/new-audio-id.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/temp/new-srt-id.srt"
+}
+```
 
-| 字段名 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `audio_url` | string | 否 | 要删除的音频 URL |
-| `srt_url` | string | 否 | 要删除的字幕 URL |
+### 5.3 `POST /del_files`
 
-*(至少提供其中一个参数)*
+永久删除音频、字幕或两者。至少提供一个 URL。
 
-#### 响应体 (Response - JSON)
+```json
+{
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/temp/source.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/temp/source.srt"
+}
+```
+
+响应：
 
 ```json
 {
@@ -273,117 +479,38 @@
 }
 ```
 
----
+## 6. curl 示例
 
-## 4. 声音配置与辅助调试
+设置地址和访问密钥：
 
-### 4.1 GET `/voices` (获取声音目录与情感配置)
-
-获取系统当前收录的全部音色池（区分 Basic 与 Advance 梯队）、各情感对应的合成超参数，以及试听样例 URL。前端可据此渲染音色选择下拉菜单。
-
-- **URL**: `/voices`
-- **Method**: `GET`
-- **Query Parameters**:
-  - `languages` (可选，可多次传递): 语种筛选（如 `?languages=en&languages=zh`）。不传时默认返回英文 (`en`) 音色。
-
-#### 响应体 (Response - JSON) 片段示例
-
-```json
-{
-  "voice_map": {
-    "Basic": {
-      "en": {
-        "male": {
-          "id": "google:en-US-Neural2-J",
-          "name": "Michael (Energetic)",
-          "avatar_url": "https://r2.fictalk.com/voice-avatars/en-US-Neural2-J.png"
-        },
-        "female": {
-          "id": "google:en-US-Neural2-F",
-          "name": "Jennifer (Warm)",
-          "avatar_url": "https://r2.fictalk.com/voice-avatars/en-US-Neural2-F.png"
-        }
-      },
-      "pool": { ... }
-    },
-    "Advance": {
-      "male": {
-        "id": "elevenlabs:pNInz6obpgDQGcFmaJgB",
-        "name": "Adam (Deep)",
-        "avatar_url": "https://r2.fictalk.com/voice-avatars/pNInz6obpgDQGcFmaJgB.png"
-      },
-      "pool": { ... }
-    }
-  },
-  "emotion_settings": {
-    "neutral": { "stability": 0.6, "similarity_boost": 0.75, "style": 0.0 },
-    "happy": { "stability": 0.45, "similarity_boost": 0.8, "style": 0.3 },
-    "angry": { "stability": 0.3, "similarity_boost": 0.8, "style": 0.6 }
-  },
-  "samples": {
-    "openai": {
-      "onyx": "https://cdn.openai.com/API/docs/audio/onyx.wav",
-      "alloy": "https://cdn.openai.com/API/docs/audio/alloy.wav"
-    }
-  }
-}
+```bash
+export DRAMAFLOW_URL="http://localhost:8000"
+export DRAMAFLOW_SECRET="replace-with-your-secret"
 ```
 
----
+查询音色：
 
-### 4.2 POST `/review` (单句音色快速试听)
-
-为前端用户在选择声音或调节配速/情感时提供单句实时试听。
-
-- **URL**: `/review`
-- **Method**: `POST`
-- **限制说明**: 输入文本最大限制 100 字符，服务端出于性能考虑会截取前 30 个字符进行实时合成。
-
-#### 请求参数 (Body - JSON)
-
-| 字段名 | 类型 | 必填 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- | :--- |
-| `text` | string | 是 | - | 试听台词内容（建议短句） |
-| `voice_id` | string | 是 | - | 音色唯一标识，例如 `"google:en-US-Neural2-J"` 或 `"elevenlabs:pNInz6obpgDQGcFmaJgB"` |
-| `pacing` | float | 否 | `1.0` | 语速倍率（范围 0.25 - 4.0） |
-| `emotion` | string | 否 | `"neutral"` | 情绪类型（如 happy, angry, sad, whispering 等） |
-
-#### 响应
-
-- **Content-Type**: `audio/mpeg`
-- **Body**: 二进制音频流（MP3 格式）。
-
----
-
-### 4.3 GET `/health` (服务健康与密钥检查)
-
-用于负载均衡健康探针与配置状态诊断。
-
-- **URL**: `/health`
-- **Method**: `GET`
-- **鉴权要求**: 无
-
-#### 响应体 (Response - JSON)
-
-```json
-{
-  "status": "healthy",
-  "openrouter_configured": false,
-  "elevenlabs_configured": true
-}
+```bash
+curl "$DRAMAFLOW_URL/voices?languages=en" \
+  -H "X-Access-Secret: $DRAMAFLOW_SECRET"
 ```
 
----
+验证合成路由但不调用外部服务：
 
-### 4.4 GET `/` (基础运行状态)
-
-- **URL**: `/`
-- **Method**: `GET`
-- **响应体**:
-  ```json
-  {
-    "service": "DramaFlow API",
-    "status": "running",
-    "version": "1.0.0"
-  }
-  ```
+```bash
+curl -X POST "$DRAMAFLOW_URL/synthesize" \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Secret: $DRAMAFLOW_SECRET" \
+  -d '{
+    "script": [{
+      "type": "narration",
+      "text": "A quiet night.",
+      "character": "Narrator",
+      "gender": "neutral",
+      "emotion": "neutral",
+      "pacing": 1.0,
+      "voice_id": ""
+    }],
+    "limit": 0
+  }'
+```
