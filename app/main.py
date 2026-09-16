@@ -55,7 +55,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, H
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 
 # Load environment variables FIRST
@@ -73,6 +73,7 @@ from app.services.audio_engine import (
     get_public_voice_groups
 )
 from app.services.post_production import merge_audio_and_generate_srt
+from app.models import ScriptSegment
 
 
 
@@ -140,12 +141,18 @@ async def verify_secret_key(header_secret: str = Security(api_key_header)):
 # Request Models
 class SynthesizeRequest(BaseModel):
     """Request model for synthesis from existing script."""
-    script: list = Field(
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    script: List[ScriptSegment] = Field(
         ...,
+        min_length=1,
+        max_length=1_000,
         description="Structured script segments to synthesize"
     )
     limit: Optional[int] = Field(
         None,
+        ge=0,
         description="Number of segments to generate. 0 = none. None = all."
     )
 
@@ -237,7 +244,8 @@ async def assign_voices(
     """
     try:
         logger.info("Assign voices request received", user_tier=user_tier, languages=languages)
-        logger.info("Assign voices parameters", script=request.script)
+        script = [segment.model_dump(exclude_none=True) for segment in request.script]
+        logger.info("Assign voices parameters", script=script)
 
         # Normalize languages
         normalized_langs = None
@@ -258,7 +266,7 @@ async def assign_voices(
 
         # Auto-assign voices
         enriched_script = tts_manager.assign_voices_to_script(
-            request.script, 
+            script,
             user_tier=user_tier,
             allowed_languages=normalized_langs
         )
@@ -294,7 +302,7 @@ async def synthesize_audio_drama(
     Synthesize audio from a provided JSON script.
     """
     elevenlabs_key = elevenlabs_api_key or os.getenv("ELEVENLABS_API_KEY")
-    script = [dict(segment) for segment in request.script]
+    script = [segment.model_dump(exclude_none=True) for segment in request.script]
 
     if request.limit == 0:
         logger.info("Limit=0, skipping synthesis")

@@ -33,8 +33,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | `X-Access-Secret` | string | 条件必填 | 后端全局安全访问密钥。当服务端环境变量配置了 `DARMAFLOW_API_ACCESS_SECRET` 时必须携带。 | `Bao32db04...` |
 | `X-User-Tier` | string | 否 | 用户等级。`free` (默认) 或 `vip`。直接决定 TTS 混合路由策略。 | `free` / `vip` |
-| `X-ElevenLabs-API-Key` | string | 否 | ElevenLabs API Key。可用于覆盖服务器默认配置（按请求计费归属）。 | `xi-...` |
-| `X-OpenRouter-API-Key` | string | 否 | OpenRouter API Key（保留供扩展使用）。 | `sk-or-v1-...` |
+| `X-ElevenLabs-API-Key` | string | 否 | 仅当最终剧本使用 ElevenLabs 音色时需要。可覆盖服务器默认配置（按请求计费归属）。 | `xi-...` |
 | `X-Correlation-ID` | string | 否 | 请求链路追踪 ID。未提供时系统自动生成 UUID。 | `b8e4f1a2-...` |
 
 ---
@@ -122,7 +121,7 @@
 
 | 字段名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `script` | array[object] | 是 | 结构化剧本片段列表。若片段包含有效的 `voice_id`（如 `"google:en-US-Neural2-J"` 或 `"elevenlabs:pNInz6obpgDQGcFmaJgB"`），系统将**强制使用指定的音色**；支持旁白与角色独立定制。 |
+| `script` | array[object] | 是 | 结构化剧本片段列表。空 `voice_id` 会在合成前自动补齐；有效的 `voice_id`（如 `"google:en-US-Neural2-J"` 或 `"elevenlabs:pNInz6obpgDQGcFmaJgB"`）会被保留。所有旁白必须使用同一音色：只指定一个旁白音色时会传播至全部旁白，指定多个不同旁白音色时返回 422。 |
 | `limit` | integer | 否 | 合成片段数量限制。<br>• `null`/不填: 合成全部片段<br>• `>0`: 截取前 N 个片段合成（用于快速试听测试）<br>• `0`: 跳过合成直接返回 |
 
 #### 请求体示例
@@ -179,6 +178,8 @@
 
 > [!NOTE]
 > `audio_url` 与 `srt_url` 初始生成在 `temp/` 临时目录下。若需要长久保存，请调用 `/save_files` 固化归档。
+
+供应商凭证按最终剧本实际引用的音色检查：纯 Google/Azure/OpenAI 请求不要求 ElevenLabs Key。请求引用了未配置的供应商时返回 `503`，音色无法解析或旁白音色冲突时返回 `422`。
 
 ---
 
