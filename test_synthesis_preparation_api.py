@@ -129,7 +129,20 @@ class SynthesisPreparationApiTests(unittest.TestCase):
         response = self.client.post(
             "/synthesize",
             headers=self.headers,
-            json={"script": [], "limit": 0},
+            json={
+                "script": [
+                    {
+                        "type": "dialogue",
+                        "text": "This segment must not reach a provider.",
+                        "character": "Alice",
+                        "gender": "female",
+                        "emotion": "neutral",
+                        "pacing": 1.0,
+                        "voice_id": "elevenlabs:21m00Tcm4TlvDq8ikWAM",
+                    }
+                ],
+                "limit": 0,
+            },
         )
         self.assertEqual(response.status_code, 200)
 

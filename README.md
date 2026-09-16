@@ -15,7 +15,7 @@ AI 驱动的沉浸式多角色有声剧（AI Audio Drama）全自动生产、后
   - 自动检测剧本文本语言（中文/英文），独立锁定旁白声音，彻底剥离上下文角色性别属性对旁白音色的干扰。
 - 🎛️ **广播剧级数字音频后期 (Post-Production Engine)**：
   - **停顿控制**：自动在对话与旁白片段间插入 300ms 黄金戏剧静音间隙（`silence_gap`）。
-  - **语速调节**：支持 0.25x - 4.0x 变速率不失真采样处理（`pacing`）。
+  - **语速调节**：支持 0.25x - 4.0x `pacing`，由各 TTS 供应商在合成阶段原生处理，避免后期二次变速。
   - **高保真输出**：统一输出 192kbps 广播级 MP3 音轨。
 - 📝 **毫秒级精确对齐字幕 (Synchronized SRT & Timeline)**：
   - 合成过程中实时计算每一句台词的精确起止时间戳，同步产出标准 `.srt` 字幕文件与前端高亮播放所需的 `timeline` 时间轴索引。
@@ -112,7 +112,7 @@ DramaFlow/
 │       ├── synthesizer.py       # 剧本级业务编排器（并发度控制、全阶段流水线调度）
 │       ├── audio_engine.py      # TTS 路由决策、配额降级监控与哈希选角引擎
 │       ├── tts_providers.py     # 多供应商抽象适配器 (Azure, Google, OpenAI, ElevenLabs)
-│       ├── post_production.py   # 数字音频拼接、pacing 调控、静音缝隙与 SRT 运算
+│       ├── post_production.py   # 数字音频拼接、静音缝隙、MP3 导出与 SRT 运算
 │       └── storage.py           # Cloudflare R2 对象存储生命周期与 Copy-on-Write 管理
 ├── env.template                 # 环境变量模板
 ├── requirements.txt             # 项目依赖清单

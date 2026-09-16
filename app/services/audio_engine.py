@@ -728,6 +728,7 @@ class TTSManager:
                     text=text,
                     output_file=output_file,
                     voice=specific_voice_id,
+                    speed=pacing,
                     api_key=elevenlabs_key,
                     settings=settings
                 )

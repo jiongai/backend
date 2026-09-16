@@ -59,41 +59,13 @@ def generate_srt_entry(index: int, start_ms: int, end_ms: int, text: str) -> str
     return f"{index}\n{start_timestamp} --> {end_timestamp}\n{text}\n"
 
 
-def apply_pacing(audio: AudioSegment, pacing: float) -> AudioSegment:
-    """
-    Apply pacing adjustment to audio segment.
-    
-    Args:
-        audio: Audio segment to adjust
-        pacing: Pacing multiplier (0.8 = slow, 1.0 = normal, 1.2 = fast)
-        
-    Returns:
-        AudioSegment: Adjusted audio
-    """
-    if pacing == 1.0:
-        return audio
-    
-    # Speed up or slow down using frame rate manipulation
-    # For pacing > 1.0: speed up (faster)
-    # For pacing < 1.0: slow down (slower)
-    # This preserves pitch by changing playback speed
-    new_sample_rate = int(audio.frame_rate * pacing)
-    
-    # Change frame rate, then set it back to original to maintain compatibility
-    adjusted_audio = audio._spawn(audio.raw_data, overrides={
-        "frame_rate": new_sample_rate
-    })
-    
-    # Reset to standard frame rate for compatibility
-    return adjusted_audio.set_frame_rate(audio.frame_rate)
-
-
 def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[str, str, List[Dict]]:
     """
     Merge all audio segments into a single file and generate SRT subtitles.
     
     Args:
-        segments: List of script segments with 'audio_file_path', 'text', and 'pacing' keys
+        segments: List of script segments with 'audio_file_path' and 'text' keys.
+                  Pacing has already been applied by the TTS provider.
         temp_dir: Directory to save output files
         
     Returns:
@@ -131,7 +103,6 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         
         audio_file_path = segment["audio_file_path"]
         text = segment["text"]
-        pacing = segment.get("pacing", 1.0)
         
         # Check if audio file exists
         if not os.path.exists(audio_file_path):
@@ -144,13 +115,6 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         except Exception as e:
             print(f"❌ Failed to load audio file: {e}")
             raise Exception(f"Failed to load audio file {audio_file_path}: {str(e)}")
-        
-        # Apply pacing adjustment if specified
-        if pacing != 1.0:
-            try:
-                audio_segment = apply_pacing(audio_segment, pacing)
-            except Exception as e:
-                print(f"Warning: Failed to apply pacing {pacing} to segment {idx}: {e}")
         
         # Add silence gap before this segment (except for the first segment)
         if idx > 1:
@@ -188,7 +152,7 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
     final_audio_path = output_path / "final.mp3"
     try:
         print(f"🔍 Exporting final audio to: {final_audio_path}")
-        final_audio.export(
+        exported_file = final_audio.export(
             final_audio_path,
             format="mp3",
             bitrate="192k",
@@ -198,6 +162,7 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
                 "genre": "Audio Drama"
             }
         )
+        exported_file.close()
         print(f"✅ Exported final audio successfully")
     except Exception as e:
         print(f"❌ Failed to export final audio: {e}")
@@ -271,4 +236,3 @@ def add_background_music(
     final_audio.export(output_path, format="mp3", bitrate="192k")
     
     return output_path
-

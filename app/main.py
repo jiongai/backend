@@ -171,7 +171,12 @@ class ReviewRequest(BaseModel):
     """Request model for voice preview/review."""
     text: str = Field(..., description="Text to speak", max_length=100)
     voice_id: str = Field(..., description="Voice ID to test")
-    pacing: Optional[float] = Field(1.0, description="Speaking speed (0.25-4.0)")
+    pacing: float = Field(
+        1.0,
+        ge=0.25,
+        le=4.0,
+        description="Speaking speed (0.25-4.0)",
+    )
     emotion: Optional[str] = Field("neutral", description="Emotion style")
     
 class SaveFilesRequest(BaseModel):

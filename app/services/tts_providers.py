@@ -3,6 +3,7 @@ import os
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Optional, Dict
+from xml.sax.saxutils import escape, quoteattr
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -42,9 +43,9 @@ class TTSProvider(ABC):
         
         Args:
             text: Text to synthesize
-            output_file: Path to save the audio file
+            output_file: Path to save the MP3 audio file
             voice: Voice ID or name
-            speed: Playback speed (default 1.0)
+            speed: Provider-native speaking speed multiplier (default 1.0)
             **kwargs: Provider-specific arguments (e.g. settings, api_key)
         """
         pass
@@ -86,6 +87,9 @@ class AzureTTSProvider(TTSProvider):
             region=self.service_region
         )
         speech_config.speech_synthesis_voice_name = voice
+        speech_config.set_speech_synthesis_output_format(
+            speechsdk.SpeechSynthesisOutputFormat.Audio48Khz192KBitRateMonoMp3
+        )
         
         # Azure supports direct file output
         audio_config = speechsdk.audio.AudioOutputConfig(filename=output_file)
@@ -95,11 +99,24 @@ class AzureTTSProvider(TTSProvider):
             audio_config=audio_config
         )
         
+        # Azure applies pacing through SSML so post-production never has to
+        # resample the generated audio (which previously changed pitch and
+        # applied pacing a second time for some providers).
+        language_code = "-".join(voice.split("-")[:2]) if "-" in voice else "en-US"
+        rate = f"{(speed - 1.0) * 100:+.0f}%"
+        ssml = (
+            f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+            f'xml:lang={quoteattr(language_code)}>'
+            f'<voice name={quoteattr(voice)}>'
+            f'<prosody rate={quoteattr(rate)}>{escape(text)}</prosody>'
+            "</voice></speak>"
+        )
+
         # Synthesize (blocking call, need to wrap in executor)
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
-            lambda: synthesizer.speak_text_async(text).get()
+            lambda: synthesizer.speak_ssml_async(ssml).get()
         )
         
         if result.reason == speechsdk.ResultReason.Canceled:
@@ -213,7 +230,8 @@ class OpenAITTSProvider(TTSProvider):
             model=model,
             voice=voice_id,
             input=text,
-            speed=speed
+            speed=speed,
+            response_format="mp3"
         )
         
         response.stream_to_file(output_file)
@@ -244,20 +262,19 @@ class ElevenLabsTTSProvider(TTSProvider):
         if not api_key:
             raise ValueError("ElevenLabs API key is required")
             
-        settings_dict = kwargs.get("settings")
+        settings_dict = kwargs.get("settings") or {}
         max_retries = kwargs.get("max_retries", 3)
         
         client = ElevenLabs(api_key=api_key)
         
         # Prepare settings
-        v_settings = None
-        if settings_dict:
-            v_settings = VoiceSettings(
-                stability=settings_dict.get("stability", 0.5),
-                similarity_boost=settings_dict.get("similarity_boost", 0.75),
-                style=settings_dict.get("style", 0.0),
-                use_speaker_boost=True
-            )
+        v_settings = VoiceSettings(
+            stability=settings_dict.get("stability", 0.5),
+            similarity_boost=settings_dict.get("similarity_boost", 0.75),
+            style=settings_dict.get("style", 0.0),
+            use_speaker_boost=True,
+            speed=speed
+        )
             
         for attempt in range(max_retries):
             try:
@@ -270,7 +287,8 @@ class ElevenLabsTTSProvider(TTSProvider):
                     voice_id=voice,
                     text=text,
                     model_id="eleven_turbo_v2_5",
-                    voice_settings=v_settings
+                    voice_settings=v_settings,
+                    output_format="mp3_44100_128"
                 )
                 
                 # Consume generator and write to file
