@@ -3,6 +3,7 @@
 import asyncio
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, call, patch
@@ -24,6 +25,8 @@ def make_segment(segment_type, text, character, gender, voice_id):
 
 class SynthesizeDramaTests(unittest.TestCase):
     def test_full_pipeline_preserves_script_order_and_uploads_artifacts(self):
+        event_loop_thread = threading.get_ident()
+        blocking_threads = {"merge": None, "uploads": []}
         script = [
             make_segment(
                 "dialogue",
@@ -64,6 +67,19 @@ class SynthesizeDramaTests(unittest.TestCase):
                 {"index": 3, "start": 900, "end": 1000},
             ]
 
+            def merge_audio(**kwargs):
+                blocking_threads["merge"] = threading.get_ident()
+                return str(final_audio), str(final_srt), timeline
+
+            upload_results = iter([
+                "projects/TestProject/temp/chapter.mp3",
+                "projects/TestProject/temp/chapter.srt",
+            ])
+
+            def upload_file(**kwargs):
+                blocking_threads["uploads"].append(threading.get_ident())
+                return next(upload_results)
+
             generate_mock = AsyncMock(side_effect=generate_audio)
             with (
                 patch.object(
@@ -74,15 +90,12 @@ class SynthesizeDramaTests(unittest.TestCase):
                 patch.object(
                     synthesizer_module,
                     "merge_audio_and_generate_srt",
-                    return_value=(str(final_audio), str(final_srt), timeline),
+                    side_effect=merge_audio,
                 ) as merge_mock,
                 patch.object(
                     synthesizer_module.r2_storage,
                     "upload_file",
-                    side_effect=[
-                        "projects/TestProject/temp/chapter.mp3",
-                        "projects/TestProject/temp/chapter.srt",
-                    ],
+                    side_effect=upload_file,
                 ) as upload_mock,
                 patch.object(
                     synthesizer_module,
@@ -121,6 +134,12 @@ class SynthesizeDramaTests(unittest.TestCase):
             )
 
             self.assertEqual(upload_mock.call_count, 2)
+            self.assertNotEqual(blocking_threads["merge"], event_loop_thread)
+            self.assertEqual(len(blocking_threads["uploads"]), 2)
+            self.assertTrue(all(
+                thread_id != event_loop_thread
+                for thread_id in blocking_threads["uploads"]
+            ))
             self.assertEqual(
                 upload_mock.call_args_list,
                 [

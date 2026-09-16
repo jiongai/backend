@@ -2,6 +2,7 @@
 
 import asyncio
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 from app.main import ReviewRequest
 from app.services.audio_engine import TTSManager
 from app.services.post_production import merge_audio_and_generate_srt
-from app.services.tts_providers import (
+from app.services.tts import (
     AzureTTSProvider,
     ElevenLabsTTSProvider,
     GoogleTTSProvider,
@@ -34,6 +35,7 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
 
     def test_azure_uses_ssml_pacing_and_mp3_output(self):
         captured = {}
+        event_loop_thread = threading.get_ident()
 
         class FakeSpeechConfig:
             def __init__(self, **kwargs):
@@ -48,6 +50,7 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
 
             def speak_ssml_async(self, ssml):
                 captured["ssml"] = ssml
+                captured["thread_id"] = threading.get_ident()
                 return SimpleNamespace(
                     get=lambda: SimpleNamespace(reason="completed")
                 )
@@ -62,7 +65,7 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
             audio=SimpleNamespace(AudioOutputConfig=lambda **kwargs: object()),
         )
 
-        with patch("app.services.tts_providers.speechsdk", fake_sdk):
+        with patch("app.services.tts.azure.speechsdk", fake_sdk):
             provider = AzureTTSProvider()
             provider._enabled = True
             asyncio.run(provider.generate(
@@ -75,12 +78,21 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
         self.assertEqual(captured["output_format"], "mp3-48khz-192k")
         self.assertIn('rate="+25%"', captured["ssml"])
         self.assertIn("A &lt; B &amp; C", captured["ssml"])
+        self.assertNotEqual(captured["thread_id"], event_loop_thread)
 
     def test_google_requests_mp3_and_native_speed(self):
+        event_loop_thread = threading.get_ident()
+        sdk_thread = None
+
+        def synthesize_speech(**kwargs):
+            nonlocal sdk_thread
+            sdk_thread = threading.get_ident()
+            return SimpleNamespace(audio_content=b"mp3")
+
         provider = GoogleTTSProvider()
         provider._enabled = True
         client = MagicMock()
-        client.synthesize_speech.return_value = SimpleNamespace(audio_content=b"mp3")
+        client.synthesize_speech.side_effect = synthesize_speech
         provider._client = client
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -95,12 +107,15 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
         audio_config = client.synthesize_speech.call_args.kwargs["audio_config"]
         self.assertEqual(audio_config.audio_encoding, 2)  # Google MP3 enum value
         self.assertEqual(audio_config.speaking_rate, 1.2)
+        self.assertNotEqual(sdk_thread, event_loop_thread)
 
     def test_openai_explicitly_requests_mp3_and_speed(self):
         captured = {}
+        event_loop_thread = threading.get_ident()
 
         class FakeResponse:
             def stream_to_file(self, output_file):
+                captured["stream_thread_id"] = threading.get_ident()
                 Path(output_file).write_bytes(b"mp3")
 
         async def create(**kwargs):
@@ -123,20 +138,23 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
 
         self.assertEqual(captured["response_format"], "mp3")
         self.assertEqual(captured["speed"], 0.9)
+        self.assertNotEqual(captured["stream_thread_id"], event_loop_thread)
 
     def test_elevenlabs_requests_mp3_and_native_speed(self):
         captured = {}
+        event_loop_thread = threading.get_ident()
 
         class FakeTextToSpeech:
             def convert(self, **kwargs):
                 captured.update(kwargs)
+                captured["thread_id"] = threading.get_ident()
                 return iter([b"mp3"])
 
         class FakeClient:
             def __init__(self, api_key):
                 self.text_to_speech = FakeTextToSpeech()
 
-        with patch("app.services.tts_providers.ElevenLabs", FakeClient):
+        with patch("app.services.tts.elevenlabs.ElevenLabs", FakeClient):
             provider = ElevenLabsTTSProvider()
             with tempfile.TemporaryDirectory() as temp_dir:
                 asyncio.run(provider.generate(
@@ -150,6 +168,7 @@ class ProviderPacingAndFormatTests(unittest.TestCase):
 
         self.assertEqual(captured["output_format"], "mp3_44100_128")
         self.assertEqual(captured["voice_settings"].speed, 1.1)
+        self.assertNotEqual(captured["thread_id"], event_loop_thread)
 
     def test_audio_engine_forwards_pacing_to_elevenlabs(self):
         manager = TTSManager()

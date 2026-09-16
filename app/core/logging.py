@@ -1,10 +1,11 @@
 import logging
-import os
 import sys
 from typing import Any
 
 import structlog
 from asgi_correlation_id import correlation_id
+
+from app.core.settings import get_settings
 
 
 SENSITIVE_KEY_PARTS = (
@@ -17,16 +18,6 @@ SENSITIVE_KEY_PARTS = (
     "token",
 )
 MAX_LOG_STRING_LENGTH = 500
-SENSITIVE_ENVIRONMENT_KEYS = (
-    "DARMAFLOW_API_ACCESS_SECRET",
-    "ELEVENLABS_API_KEY",
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-    "OPENAI_API_KEY",
-    "R2_ACCESS_KEY_ID",
-    "R2_SECRET_ACCESS_KEY",
-)
-
-
 def _sanitize_log_value(key: str, value: Any) -> Any:
     """Redact credentials and bound arbitrary log payload sizes."""
     normalized_key = key.lower()
@@ -48,10 +39,8 @@ def _sanitize_log_value(key: str, value: Any) -> Any:
         return sanitized
     if isinstance(value, str):
         sanitized = value
-        for environment_key in SENSITIVE_ENVIRONMENT_KEYS:
-            secret_value = os.getenv(environment_key)
-            if secret_value and len(secret_value) >= 4:
-                sanitized = sanitized.replace(secret_value, "[REDACTED]")
+        for secret_value in get_settings().sensitive_values:
+            sanitized = sanitized.replace(secret_value, "[REDACTED]")
         if len(sanitized) > MAX_LOG_STRING_LENGTH:
             return f"{sanitized[:MAX_LOG_STRING_LENGTH]}...[truncated]"
         return sanitized
@@ -68,14 +57,7 @@ def redact_sensitive_data(logger, log_method, event_dict):
 
 def control_exception_details(logger, log_method, event_dict):
     """Suppress stack traces by default in production logs."""
-    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
-    configured = os.getenv("LOG_INCLUDE_STACKTRACES", "").strip().lower()
-    if configured:
-        include_stacktraces = configured in {"1", "true", "yes", "on"}
-    else:
-        include_stacktraces = environment not in {"production", "prod"}
-
-    if not include_stacktraces:
+    if not get_settings().include_stacktraces:
         event_dict.pop("exc_info", None)
         event_dict.pop("stack", None)
     return event_dict
@@ -110,14 +92,10 @@ def configure_logging():
     
     processors.insert(1, add_correlation)
 
-    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
-    log_format = os.getenv("LOG_FORMAT", "").strip().lower()
-    use_json = log_format == "json" or (
-        not log_format and environment in {"production", "prod"}
-    )
+    settings = get_settings()
     renderer = (
         structlog.processors.JSONRenderer()
-        if use_json
+        if settings.use_json_logs
         else structlog.dev.ConsoleRenderer()
     )
     
@@ -132,8 +110,7 @@ def configure_logging():
     )
 
     # Configure Standard Library Logging to define format and level
-    log_level_name = os.getenv("LOG_LEVEL", "INFO").strip().upper()
-    log_level = getattr(logging, log_level_name, logging.INFO)
+    log_level = getattr(logging, settings.log_level, logging.INFO)
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,

@@ -1,6 +1,5 @@
 """Cloudflare R2 storage and strict public artifact URL handling."""
 
-import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -10,6 +9,8 @@ from urllib.parse import unquote, urlsplit
 import boto3
 import structlog
 from botocore.exceptions import ClientError
+
+from app.core.settings import Settings, get_settings
 
 
 logger = structlog.get_logger(__name__)
@@ -37,11 +38,13 @@ class R2ObjectReference:
 
 
 class R2Storage:
-    def __init__(self):
-        self.endpoint_url = os.getenv("R2_ENDPOINT_URL")
-        self.access_key_id = os.getenv("R2_ACCESS_KEY_ID")
-        self.secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
-        self.bucket_name = os.getenv("R2_BUCKET_NAME")
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings
+        configuration = settings or get_settings()
+        self.endpoint_url = configuration.r2_endpoint_url
+        self.access_key_id = configuration.r2_access_key_id
+        self.secret_access_key = configuration.r2_secret_access_key
+        self.bucket_name = configuration.r2_bucket_name
 
         if not all([
             self.endpoint_url,
@@ -68,9 +71,9 @@ class R2Storage:
             )
             self.s3_client = None
 
-    @staticmethod
-    def _public_domain() -> str:
-        public_domain = os.getenv("R2_PUBLIC_DOMAIN", "").strip().rstrip("/")
+    def _public_domain(self) -> str:
+        settings = getattr(self, "settings", None) or get_settings()
+        public_domain = (settings.r2_public_domain or "").rstrip("/")
         parsed = urlsplit(public_domain)
         if (
             not public_domain

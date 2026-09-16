@@ -17,7 +17,7 @@ class SynthesisPreparationApiTests(unittest.TestCase):
             "X-Access-Secret": os.getenv("DARMAFLOW_API_ACCESS_SECRET", "")
         }
 
-    @patch("app.main.synthesize_drama", new_callable=AsyncMock)
+    @patch("app.api.routes.synthesis.synthesize_drama", new_callable=AsyncMock)
     def test_empty_voice_is_prepared_before_synthesis(self, synthesize_mock):
         synthesize_mock.return_value = {
             "audio_url": "audio.mp3",
@@ -53,7 +53,7 @@ class SynthesisPreparationApiTests(unittest.TestCase):
         self.assertTrue(prepared[0]["voice_id"].startswith("google:"))
         self.assertEqual(prepared[0]["gender"], "neutral")
 
-    @patch("app.main.synthesize_drama", new_callable=AsyncMock)
+    @patch("app.api.routes.synthesis.synthesize_drama", new_callable=AsyncMock)
     def test_google_script_does_not_require_elevenlabs_key(self, synthesize_mock):
         synthesize_mock.return_value = {
             "audio_url": "audio.mp3",
@@ -88,7 +88,7 @@ class SynthesisPreparationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         synthesize_mock.assert_awaited_once()
 
-    @patch("app.main.synthesize_drama", new_callable=AsyncMock)
+    @patch("app.api.routes.synthesis.synthesize_drama", new_callable=AsyncMock)
     def test_elevenlabs_script_requires_elevenlabs_key(self, synthesize_mock):
         elevenlabs = tts_manager.providers["elevenlabs"]
         original_key = elevenlabs.default_key

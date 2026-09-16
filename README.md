@@ -115,16 +115,34 @@ python -m unittest discover -v
 ```
 DramaFlow/
 ├── app/
-│   ├── main.py                  # FastAPI 主应用、路由网关、中间件与安全鉴权
+│   ├── main.py                  # FastAPI 应用工厂、中间件与路由装配
+│   ├── api/
+│   │   ├── dependencies.py      # 鉴权与共享请求依赖
+│   │   ├── errors.py            # 统一错误响应
+│   │   ├── schemas.py           # API 请求与响应模型
+│   │   └── routes/
+│   │       ├── system.py        # 根路径与健康检查
+│   │       ├── voices.py        # 音色目录、分配与试听
+│   │       ├── synthesis.py     # 完整音频剧合成
+│   │       └── storage.py       # R2 文件生命周期接口
 │   ├── config/
 │   │   ├── voices.json          # 声音池配置、多语言映射与情感超参数字典
 │   │   └── avatar_map.json      # 声音对应的头像静态映射
 │   ├── core/
-│   │   └── logging.py           # structlog 结构化日志配置与 Request ID 追踪
+│   │   ├── settings.py          # 类型化环境配置的唯一入口
+│   │   ├── runtime.py           # ffmpeg 等运行环境初始化
+│   │   └── logging.py           # structlog 结构化日志与敏感信息脱敏
 │   └── services/
 │       ├── synthesizer.py       # 剧本级业务编排器（并发度控制、全阶段流水线调度）
 │       ├── audio_engine.py      # TTS 路由决策、配额降级监控与哈希选角引擎
-│       ├── tts_providers.py     # 多供应商抽象适配器 (Azure, Google, OpenAI, ElevenLabs)
+│       ├── tts_providers.py     # 旧导入路径的兼容门面
+│       ├── tts/
+│       │   ├── base.py          # 供应商统一接口
+│       │   ├── registry.py      # 供应商注册与构造
+│       │   ├── azure.py         # Azure Speech 适配器
+│       │   ├── google.py        # Google Cloud TTS 适配器
+│       │   ├── openai.py        # OpenAI TTS 适配器
+│       │   └── elevenlabs.py    # ElevenLabs 适配器
 │       ├── post_production.py   # 数字音频拼接、静音缝隙、MP3 导出与 SRT 运算
 │       └── storage.py           # Cloudflare R2 对象存储生命周期与 Copy-on-Write 管理
 ├── env.template                 # 环境变量模板

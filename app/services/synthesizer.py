@@ -3,6 +3,8 @@ import asyncio
 from typing import List, Dict
 import structlog
 
+from app.core.settings import get_settings
+
 logger = structlog.get_logger(__name__)
 
 
@@ -105,9 +107,10 @@ async def synthesize_drama(
     # Step 3: Merge and SRT
     logger.info("Merging audio and generating subtitles", segments_count=len(script))
     try:
-        final_audio_path, final_srt_path, timeline_data = merge_audio_and_generate_srt(
+        final_audio_path, final_srt_path, timeline_data = await asyncio.to_thread(
+            merge_audio_and_generate_srt,
             segments=script,
-            temp_dir=temp_dir
+            temp_dir=temp_dir,
         )
     except Exception as e:
         logger.exception(
@@ -122,26 +125,28 @@ async def synthesize_drama(
     # Generate IDs
     # In a real app, project_id might come from the request. 
     # For now, we put everything in a 'demos' folder or similar.
-    project_id = os.getenv("R2_PROJECT_ID", "Railway") # Updated to use Env Var
+    project_id = get_settings().r2_project_id
     chapter_id = str(uuid4())
     
     try:
         # Upload Audio
-        audio_key = r2_storage.upload_file(
+        audio_key = await asyncio.to_thread(
+            r2_storage.upload_file,
             file_path=final_audio_path,
             project_id=project_id,
             chapter_id=chapter_id,
             content_type="audio/mpeg",
-            subfolder="temp"
+            subfolder="temp",
         )
         
         # Upload SRT
-        srt_key = r2_storage.upload_file(
+        srt_key = await asyncio.to_thread(
+            r2_storage.upload_file,
             file_path=final_srt_path,
             project_id=project_id,
             chapter_id=chapter_id,
             content_type="application/x-subrip", # Standard for SRT
-            subfolder="temp"
+            subfolder="temp",
         )
         
         audio_url = r2_storage.build_public_url(audio_key)

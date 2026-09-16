@@ -14,13 +14,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-from .tts_providers import (
-    AzureTTSProvider, 
-    GoogleTTSProvider, 
-    OpenAITTSProvider,
-    ElevenLabsTTSProvider,
-    TTSProvider
-)
+from .tts import TTSProvider, build_tts_providers
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION
@@ -328,19 +322,13 @@ def generate_cast_metadata(script: list, user_tier: str = "free") -> list:
         
     return list(cast_map.values())
 
-        
-    return list(cast_map.values())
-
 
 class TTSManager:
 
-    def __init__(self):
-        self.providers = {
-            "azure": AzureTTSProvider(),
-            "google": GoogleTTSProvider(),
-            "openai": OpenAITTSProvider(),
-            "elevenlabs": ElevenLabsTTSProvider()
-        }
+    def __init__(self, providers: Optional[Dict[str, TTSProvider]] = None):
+        self.providers = (
+            providers if providers is not None else build_tts_providers()
+        )
     
     def _get_consistent_voice(self, character: str, gender: str, provider: str, lang: str = "en") -> str:
         """
