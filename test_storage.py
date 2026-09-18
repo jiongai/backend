@@ -182,6 +182,38 @@ class R2StorageTests(unittest.TestCase):
             "projects/DramaFlow/temp/source.mp3",
         )
 
+    def test_bare_public_domain_builds_and_accepts_https_artifact_urls(self):
+        key = "projects/DramaFlow/temp/source.mp3"
+        expected = f"https://r2.fictalk.com/{key}"
+        for domain in ("r2.fictalk.com", "r2.fictalk.com/", "https://r2.fictalk.com/"):
+            with self.subTest(domain=domain), patch.dict(
+                os.environ, {"R2_PUBLIC_DOMAIN": domain}
+            ):
+                self.assertEqual(self.storage.build_public_url(key), expected)
+                self.assertEqual(self.storage.parse_public_url(expected).key, key)
+                for foreign_url in (
+                    f"http://r2.fictalk.com/{key}",
+                    f"https://r2.fictalk.com.evil/{key}",
+                ):
+                    with self.assertRaises(ValueError):
+                        self.storage.delete_file(foreign_url)
+        self.storage.s3_client.delete_object.assert_not_called()
+
+    def test_malformed_public_domain_is_not_repaired(self):
+        for domain in (
+            "", "https:r2.fictalk.com", "https:/r2.fictalk.com",
+            "//r2.fictalk.com", "ftp://r2.fictalk.com",
+            "user@r2.fictalk.com", "r2.fictalk.com?download=1",
+            "r2.fictalk.com#fragment", "r2..fictalk.com", "r2 fictalk.com",
+            "https://user:password@r2.fictalk.com",
+            "https://r2.fictalk.com?download=1", "https://r2.fictalk.com#fragment",
+        ):
+            with self.subTest(domain=domain), patch.dict(
+                os.environ, {"R2_PUBLIC_DOMAIN": domain}
+            ):
+                with self.assertRaisesRegex(RuntimeError, "R2_PUBLIC_DOMAIN"):
+                    self.storage.build_public_url("projects/DramaFlow/temp/source.mp3")
+
     def test_unconfigured_storage_fails_before_network_access(self):
         self.storage.s3_client = None
 

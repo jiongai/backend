@@ -23,6 +23,11 @@ OBJECT_KEY_PATTERN = re.compile(
     r"(?P<extension>\.mp3|\.srt)$"
 )
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+BARE_DOMAIN_PATTERN = re.compile(
+    r"(?=.{1,253}$)"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+)
 ALLOWED_FOLDERS = {"temp", "saved"}
 
 
@@ -74,6 +79,10 @@ class R2Storage:
     def _public_domain(self) -> str:
         settings = getattr(self, "settings", None) or get_settings()
         public_domain = (settings.r2_public_domain or "").rstrip("/")
+        # Accept a bare custom domain, but do not repair malformed URLs or
+        # credentials. Both URL generation and ownership checks use this value.
+        if BARE_DOMAIN_PATTERN.fullmatch(public_domain):
+            public_domain = f"https://{public_domain}"
         parsed = urlsplit(public_domain)
         if (
             not public_domain
@@ -84,7 +93,10 @@ class R2Storage:
             or parsed.query
             or parsed.fragment
         ):
-            raise RuntimeError("R2_PUBLIC_DOMAIN must be an absolute HTTP(S) URL")
+            raise RuntimeError(
+                "R2_PUBLIC_DOMAIN must be an absolute HTTP(S) URL or a bare domain "
+                "(for example, https://r2.example.com)"
+            )
         return public_domain
 
     @staticmethod

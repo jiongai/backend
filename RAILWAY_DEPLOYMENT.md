@@ -138,7 +138,7 @@ R2_PROJECT_ID=DramaFlowProduction
 
 - `R2_ENDPOINT_URL` 是 S3 兼容 API 地址。
 - `R2_PUBLIC_DOMAIN` 是用户访问 MP3/SRT 的 HTTP(S) 公共域名，两者不是同一个地址。
-- `R2_PUBLIC_DOMAIN` 必须包含 `https://`，不要带末尾斜杠、查询参数或 fragment。
+- `R2_PUBLIC_DOMAIN` 推荐填写完整的 `https://` 地址；合法的裸域名（如 `r2.fictalk.com`）会自动补为 `https://r2.fictalk.com`。末尾斜杠会自动去除，不允许包含登录凭据、查询参数或 fragment。
 - `R2_PROJECT_ID` 只能使用字母、数字、点、下划线和连字符，并决定对象路径：
 
 ```text
@@ -320,6 +320,18 @@ Railway 的 **Deployments → Logs** 可以查看实时日志。生产环境默�
 - R2 存储量及 `temp` 生命周期清理情况。
 
 ## 8. 故障排除
+
+### 合成时报 `R2_PUBLIC_DOMAIN must be an absolute HTTP(S) URL`
+
+这表示运行中的公共域名配置未通过校验。旧版代码要求包含协议，裸域名会在生成返回链接时失败；当前版本会为合法裸域名自动补上 `https://`，需部署包含此修复的代码才能生效。
+
+推荐在 Railway 中设置 `R2_PUBLIC_DOMAIN=https://r2.fictalk.com`（替换为自己的 R2 公共域名），核对待应用变更中的新值并点击 Deploy。紫色变量表示仍有待应用修改。若仍报错，在运行容器中执行以下命令，只检查这一项实际值：
+
+```bash
+python -c 'import os; print(repr(os.environ.get("R2_PUBLIC_DOMAIN")))'
+```
+
+空值、`https:r2.fictalk.com` 等错误格式仍会被拒绝。本地 `.env` 的修改不会自动更新 Railway Variables。
 
 ### 启动时报 `No module named 'pyaudioop'`
 
