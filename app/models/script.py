@@ -60,6 +60,7 @@ class ScriptSegment(BaseModel):
         max_length=MAX_VOICE_ID_LENGTH,
         description="Namespaced voice ID; an empty value requests automatic assignment",
     )
+    pause_after_ms: int = Field(default=300, ge=0, le=3000, description="Silence after this line in milliseconds")
     provider: TTSProviderName | None = Field(
         default=None,
         description="Legacy provider hint for non-namespaced voice IDs",

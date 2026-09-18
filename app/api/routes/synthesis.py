@@ -95,6 +95,7 @@ async def synthesize_audio_drama(
             audio_url=result["audio_url"],
             srt_url=result["srt_url"],
             timeline=result.get("timeline"),
+            audio_duration_ms=max((item["end"] for item in result.get("timeline", [])), default=0),
         )
     except HTTPException:
         cleanup_temp_directory(temp_dir)

@@ -1,5 +1,8 @@
 """Voice catalog, assignment, and preview routes."""
 
+import asyncio
+from app.services.post_production import get_audio_duration
+
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -145,6 +148,7 @@ async def review_voice(
             path=files[0],
             media_type="audio/mpeg",
             filename="preview.mp3",
+            headers={"X-Audio-Duration-Ms": str(await asyncio.to_thread(get_audio_duration, str(files[0])))},
         )
     except HTTPException:
         cleanup_temp_directory(temp_dir)

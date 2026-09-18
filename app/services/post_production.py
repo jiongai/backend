@@ -90,7 +90,6 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
     timeline_data = []
     
     # Silence gap between segments (300ms)
-    silence_gap = AudioSegment.silent(duration=300)
     
     # Track current position in the timeline
     current_time_ms = 0
@@ -124,6 +123,7 @@ def merge_audio_and_generate_srt(segments: List[Dict], temp_dir: str) -> Tuple[s
         
         # Add silence gap before this segment (except for the first segment)
         if idx > 1:
+            silence_gap = AudioSegment.silent(duration=segments[idx - 2].get("pause_after_ms", 300))
             final_audio += silence_gap
             current_time_ms += len(silence_gap)
         
