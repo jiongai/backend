@@ -32,6 +32,11 @@ class DramaResponse(BaseModel):
     timeline: Optional[List[Dict[str, Any]]] = None
 
 
+class EditableDramaResponse(DramaResponse):
+    edit_id: str
+    segment_ids: List[str]
+
+
 class ReviewRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=100)
     voice_id: str = Field(..., min_length=1)

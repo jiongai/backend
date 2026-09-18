@@ -1,6 +1,7 @@
 """Full audio-drama synthesis route."""
 
 import tempfile
+from uuid import UUID
 from typing import Literal, Optional
 
 import structlog
@@ -8,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
 from app.api.dependencies import verify_secret_key
 from app.api.errors import internal_error
-from app.api.schemas import DramaResponse, SynthesizeRequest
+from app.api.schemas import DramaResponse, EditableDramaResponse, SynthesizeRequest
 from app.api.utils import cleanup_temp_directory
 from app.core.settings import get_settings
 from app.services.audio_engine import tts_manager
@@ -22,10 +23,11 @@ router = APIRouter(
 )
 
 
-@router.post("/synthesize", response_model=DramaResponse)
+@router.post("/synthesize", response_model=EditableDramaResponse | DramaResponse)
 async def synthesize_audio_drama(
     request: SynthesizeRequest,
     background_tasks: BackgroundTasks,
+    x_user_id: Optional[UUID] = Header(None),
     elevenlabs_api_key: Optional[str] = Header(
         None,
         alias="X-ElevenLabs-API-Key",
@@ -87,10 +89,13 @@ async def synthesize_audio_drama(
             temp_dir=temp_dir,
             elevenlabs_key=elevenlabs_key,
             user_tier=user_tier,
+            **({"edit_owner": str(x_user_id)} if x_user_id and user_tier == "vip" else {}),
         )
         background_tasks.add_task(cleanup_temp_directory, temp_dir)
-        return DramaResponse(
+        response_type = EditableDramaResponse if result.get("edit_id") else DramaResponse
+        return response_type(
             message="Synthesis successful",
+            **({"edit_id": result["edit_id"], "segment_ids": result["segment_ids"]} if result.get("edit_id") else {}),
             segments_count=len(prepared_script),
             audio_url=result["audio_url"],
             srt_url=result["srt_url"],

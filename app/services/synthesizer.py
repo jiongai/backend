@@ -18,7 +18,8 @@ async def synthesize_drama(
     script: List[Dict],
     temp_dir: str,
     elevenlabs_key: str,
-    user_tier: str = "free"
+    user_tier: str = "free",
+    edit_owner: str | None = None,
 ) -> Dict:
     """
     Orchestrate the synthesis of an audio drama from a script.
@@ -160,7 +161,13 @@ async def synthesize_drama(
         if os.path.exists(final_srt_path):
             os.remove(final_srt_path)
             
+        edit_metadata = {}
+        if edit_owner and user_tier == "vip":
+            from .segment_edits import create_edit
+            edit_metadata = await asyncio.to_thread(create_edit, edit_owner, script, temp_dir)
+
         return {
+            **edit_metadata,
             "audio_url": audio_url,
             "srt_url": srt_url,
             "timeline": timeline_data
