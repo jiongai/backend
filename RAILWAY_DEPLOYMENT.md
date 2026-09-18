@@ -4,6 +4,7 @@
 
 - `railway.toml`：使用 Nixpacks 构建并启动 uvicorn。
 - `nixpacks.toml`：安装 Python 3.12、pip、ffmpeg 和 util-linux。
+- `.python-version`：为 Nixpacks 和 Railpack 声明 Python 3.12；平台的 Python 版本环境变量可能覆盖此文件。
 - `Procfile`：备用启动声明。
 
 当前服务接收结构化剧本并返回 R2 上的 MP3/SRT URL；不存在旧版 `/generate` 接口，也不会返回 ZIP 文件。
@@ -319,6 +320,24 @@ Railway 的 **Deployments → Logs** 可以查看实时日志。生产环境默�
 - R2 存储量及 `temp` 生命周期清理情况。
 
 ## 8. 故障排除
+
+### 启动时报 `No module named 'pyaudioop'`
+
+如果日志路径包含 `python3.13`，且堆栈在 `pydub/utils.py` 的 `import pyaudioop as audioop` 处退出，原因是 Python 3.13 移除了标准库 `audioop`，而 pydub 的备用导入也不可用。这发生在应用导入阶段。
+
+项目的 `requirements.txt` 已包含兼容依赖：
+
+```text
+audioop-lts; python_version >= "3.13"
+```
+
+Python 3.13 及以上会安装该包，Python 3.12 使用标准库模块。参考 [Python 官方说明](https://docs.python.org/3/library/audioop.html) 和 [audioop-lts 安装说明](https://pypi.org/project/audioop-lts/)。
+
+处理步骤：
+
+1. 将更新后的 `requirements.txt` 和 `.python-version` 推送到 Railway 关联的仓库分支，并触发包含依赖安装的重新构建；仅重启旧容器不会安装新依赖。
+2. 检查构建日志中的构建器和 Python 版本。若实际使用 Railpack，`nixpacks.toml` 不控制其 Python 版本；[Railpack 会读取 `.python-version`](https://railpack.com/languages/python)。如 Variables 已设置 `RAILPACK_PYTHON_VERSION`，应改为 `3.12` 或移除覆盖值；Nixpacks 对应变量为 `NIXPACKS_PYTHON_VERSION`。
+3. 在部署容器中运行 `python -c "import audioop; from pydub import AudioSegment; print('audio dependencies OK')"`，然后确认 `/health` 返回成功。
 
 ### 受保护接口返回 503
 
