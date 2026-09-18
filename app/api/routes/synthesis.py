@@ -89,7 +89,7 @@ async def synthesize_audio_drama(
             temp_dir=temp_dir,
             elevenlabs_key=elevenlabs_key,
             user_tier=user_tier,
-            **({"edit_owner": str(x_user_id)} if x_user_id and user_tier == "vip" else {}),
+            **({"edit_owner": str(x_user_id)} if x_user_id else {}),
         )
         background_tasks.add_task(cleanup_temp_directory, temp_dir)
         response_type = EditableDramaResponse if result.get("edit_id") else DramaResponse

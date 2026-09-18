@@ -162,7 +162,7 @@ async def synthesize_drama(
             os.remove(final_srt_path)
             
         edit_metadata = {}
-        if edit_owner and user_tier == "vip":
+        if edit_owner:
             from .segment_edits import create_edit
             edit_metadata = await asyncio.to_thread(create_edit, edit_owner, script, temp_dir)
 

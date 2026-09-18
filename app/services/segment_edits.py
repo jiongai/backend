@@ -80,7 +80,7 @@ def speech_settings(script):
     return {k: v for k, v in script.items() if k != "pause_after_ms"}
 
 
-async def regenerate(owner, edit_id, segment_id, script, temp_dir, character_limit=2000):
+async def prepare_regeneration(owner, edit_id, segment_id, script, character_limit=2000, user_tier="vip"):
     base = await asyncio.to_thread(load_edit, owner, edit_id)
     original = next((s for s in base["segments"] if s["id"] == segment_id), None)
     if original is None:
@@ -88,17 +88,30 @@ async def regenerate(owner, edit_id, segment_id, script, temp_dir, character_lim
     total = sum(len(s["script"]["text"]) for s in base["segments"] if s["id"] != segment_id) + len(script["text"])
     if total > character_limit:
         raise HTTPException(403, "The edited script exceeds your character limit")
-    prepared = tts_manager.prepare_script([script], user_tier="vip")[0]
-    if speech_settings(prepared) == speech_settings(original["script"]) and prepared.get("pause_after_ms", 300) != original["script"].get("pause_after_ms", 300):
+    script = dict(script)
+    if user_tier == "free":
+        script["emotion"] = "neutral"
+    prepared = tts_manager.prepare_script([script], user_tier=user_tier)[0]
+    if user_tier == "free" and not tts_manager.get_required_providers([prepared]).issubset({"google", "azure"}):
+        raise HTTPException(403, "Premium voices require a paid plan")
+    reuse = speech_settings(prepared) == speech_settings(original["script"]) and prepared.get("pause_after_ms", 300) != original["script"].get("pause_after_ms", 300)
+    return original, prepared, not reuse
+
+
+async def regenerate(owner, edit_id, segment_id, script, temp_dir, character_limit=2000, user_tier="vip", generation_reserved=False):
+    original, prepared, requires_generation = await prepare_regeneration(owner, edit_id, segment_id, script, character_limit, user_tier)
+    if not requires_generation:
         clip = {k: original[k] for k in ("clip_id", "duration_ms")}
         generated_ms = 0
     else:
+        if user_tier == "free" and not generation_reserved:
+            raise HTTPException(403, "Audio allowance must be reserved before generation")
         providers = tts_manager.get_required_providers([prepared])
         missing = tts_manager.get_missing_provider_credentials(providers, elevenlabs_key=get_settings().elevenlabs_api_key)
         if missing:
             raise HTTPException(503, "The selected voice provider is unavailable")
         path = await generate_segment_audio(segment=prepared, output_dir=temp_dir,
-                                           elevenlabs_api_key=get_settings().elevenlabs_api_key, user_tier="vip")
+                                           elevenlabs_api_key=get_settings().elevenlabs_api_key, user_tier=user_tier)
         clip = await asyncio.to_thread(store_clip, owner, path, temp_dir)
         generated_ms = clip["duration_ms"]
     candidate_id = str(uuid4())

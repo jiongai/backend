@@ -66,7 +66,7 @@ class SegmentEditTests(unittest.TestCase):
         self.middle = self.base['segments'][1]
         self.new_script = {**self.middle['script'], 'text': 'Changed line', 'emotion': 'angry'}
 
-    def generate(self, script=None):
+    def generate(self, script=None, user_tier="vip", generation_reserved=False):
         async def tts(**kwargs):
             path = str(Path(kwargs['output_dir']) / 'new.wav')
             Sine(700).to_audio_segment(duration=1200).export(path, format='wav').close()
@@ -76,7 +76,7 @@ class SegmentEditTests(unittest.TestCase):
              patch.object(edits.tts_manager, 'get_missing_provider_credentials', return_value=[]), \
              patch.object(edits, 'generate_segment_audio', side_effect=tts) as mock:
             result = asyncio.run(edits.regenerate(self.owner, self.metadata['edit_id'], self.middle['id'],
-                                                  script or self.new_script, self.temp.name))
+                                                  script or self.new_script, self.temp.name, user_tier=user_tier, generation_reserved=generation_reserved))
             return result, mock.call_count
 
     def test_replaces_only_middle_line_and_retimes_subtitles(self):
@@ -124,7 +124,7 @@ class SegmentEditTests(unittest.TestCase):
         self.assertEqual(edits.load_edit(self.owner, self.metadata['edit_id']), self.base)
         self.assertIsNotNone(edits.accept(self.owner, self.metadata['edit_id'], candidate['candidate_id'], self.temp.name)['audio_url'])
 
-    def test_full_synthesis_preserves_legacy_response_and_passes_paid_owner(self):
+    def test_full_synthesis_preserves_legacy_response_and_passes_signed_in_owner(self):
         from app.api.routes import synthesis
         app = FastAPI(); app.include_router(synthesis.router)
         app.dependency_overrides[verify_secret_key] = lambda: None
@@ -140,24 +140,60 @@ class SegmentEditTests(unittest.TestCase):
             self.assertNotIn('segment_ids', response.json())
             self.assertNotIn('edit_owner', mock.await_args.kwargs)
             mock.return_value = {**output, 'edit_id': self.metadata['edit_id'], 'segment_ids': [self.middle['id']]}
-            response = client.post('/synthesize', json={'script': [self.middle['script']]}, headers={'x-user-id': self.owner, 'x-user-tier': 'vip'})
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()['edit_id'], self.metadata['edit_id'])
-            self.assertEqual(mock.await_args.kwargs['edit_owner'], self.owner)
+            for tier in ['free', 'vip']:
+                response = client.post('/synthesize', json={'script': [self.middle['script']]}, headers={'x-user-id': self.owner, 'x-user-tier': tier})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()['edit_id'], self.metadata['edit_id'])
+                self.assertEqual(mock.await_args.kwargs['edit_owner'], self.owner)
 
     def test_cannot_expand_total_project_beyond_character_allowance(self):
         with self.assertRaises(HTTPException) as error:
             asyncio.run(edits.regenerate(self.owner, self.metadata['edit_id'], self.middle['id'], self.new_script, self.temp.name, character_limit=1))
         self.assertEqual(error.exception.status_code, 403)
 
-    def test_api_requires_paid_account_and_rejects_arbitrary_sources(self):
+    def test_free_generation_requires_reservation_and_reports_only_new_duration(self):
+        with self.assertRaises(HTTPException) as error:
+            self.generate(user_tier="free")
+        self.assertEqual(error.exception.status_code, 403)
+        result, calls = self.generate(user_tier="free", generation_reserved=True)
+        self.assertEqual(calls, 1)
+        self.assertEqual(result['generated_ms'], 1200)
+        candidate = edits.read_manifest(self.owner, result['candidate_id'])
+        self.assertEqual(candidate['script']['emotion'], 'neutral')
+
+    def test_free_pause_only_change_needs_no_reservation_or_tts(self):
+        result, calls = self.generate({**self.middle['script'], 'pause_after_ms': 1000}, user_tier="free")
+        self.assertEqual(calls, 0)
+        self.assertEqual(result['generated_ms'], 0)
+
+    def test_free_planning_rejects_premium_provider_before_tts(self):
+        with patch.object(edits.tts_manager, 'prepare_script', side_effect=lambda script, **kw: script), \
+             patch.object(edits.tts_manager, 'get_required_providers', return_value={'elevenlabs'}), \
+             patch.object(edits, 'generate_segment_audio', new_callable=AsyncMock) as tts:
+            with self.assertRaises(HTTPException) as error:
+                asyncio.run(edits.prepare_regeneration(self.owner, self.metadata['edit_id'], self.middle['id'], self.new_script, user_tier='free'))
+            self.assertEqual(error.exception.status_code, 403)
+            tts.assert_not_called()
+
+    def test_planning_is_read_only_and_account_scoped(self):
+        before = copy.deepcopy(self.storage.objects)
+        with patch.object(edits.tts_manager, 'prepare_script', side_effect=lambda script, **kw: script), \
+             patch.object(edits.tts_manager, 'get_required_providers', return_value={'google'}):
+            _, _, requires = asyncio.run(edits.prepare_regeneration(self.owner, self.metadata['edit_id'], self.middle['id'], self.new_script, user_tier='free'))
+            self.assertTrue(requires)
+            self.assertEqual(before, self.storage.objects)
+            with self.assertRaises(HTTPException) as error:
+                asyncio.run(edits.prepare_regeneration(str(uuid4()), self.metadata['edit_id'], self.middle['id'], self.new_script, user_tier='free'))
+            self.assertEqual(error.exception.status_code, 404)
+
+    def test_api_requires_account_and_rejects_arbitrary_sources(self):
         app = FastAPI(); app.include_router(routes.router)
         app.dependency_overrides[verify_secret_key] = lambda: None
         client = TestClient(app)
         payload = dict(edit_id=self.metadata['edit_id'], segment_id=self.middle['id'], segment=self.new_script)
         with patch.object(routes.segment_edits, 'regenerate', new_callable=AsyncMock) as mock:
-            response = client.post('/regenerate_segment', json=payload, headers={'x-user-id': self.owner, 'x-user-tier': 'free'})
-            self.assertEqual(response.status_code, 403); mock.assert_not_called()
+            response = client.post('/regenerate_segment', json=payload, headers={'x-user-tier': 'free'})
+            self.assertEqual(response.status_code, 422); mock.assert_not_called()
             self.assertEqual(client.post('/regenerate_segment', json={**payload, 'audio_url': 'http://localhost/private'}, headers={'x-user-id': self.owner, 'x-user-tier': 'vip'}).status_code, 422)
             mock.assert_not_called()
 

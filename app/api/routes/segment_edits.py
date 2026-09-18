@@ -1,4 +1,4 @@
-"""Pro-only edit operations. Account identity is supplied by the authenticated gateway."""
+"""Signed-in account edit operations. Account identity is supplied by the authenticated gateway."""
 import asyncio
 import tempfile
 from typing import Literal
@@ -16,9 +16,7 @@ from app.services import segment_edits
 router = APIRouter(tags=["synthesis"], dependencies=[Depends(verify_secret_key)])
 
 
-def owner_id(x_user_id: UUID = Header(), x_user_tier: Literal["free", "vip"] = Header("free")):
-    if x_user_tier != "vip":
-        raise HTTPException(403, "Dialogue regeneration requires Pro or Max")
+def owner_id(x_user_id: UUID = Header()):
     return str(x_user_id)
 
 
@@ -35,12 +33,26 @@ class AcceptRequest(BaseModel):
     candidate_id: UUID
 
 
+@router.post("/plan_segment_edit")
+async def plan(request: RegenerateRequest, owner: str = Depends(owner_id), x_character_limit: int = Header(2000, ge=1, le=100_000),
+               x_user_tier: Literal["free", "vip"] = Header("free")):
+    try:
+        _, _, requires_generation = await segment_edits.prepare_regeneration(owner, str(request.edit_id), str(request.segment_id),
+            request.segment.model_dump(exclude_none=True), x_character_limit, x_user_tier)
+        return {"requires_generation": requires_generation}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise internal_error("segment_planning_failed") from exc
+
+
 @router.post("/regenerate_segment")
-async def regenerate(request: RegenerateRequest, owner: str = Depends(owner_id), x_character_limit: int = Header(2000, ge=1, le=100_000)):
+async def regenerate(request: RegenerateRequest, owner: str = Depends(owner_id), x_character_limit: int = Header(2000, ge=1, le=100_000),
+                     x_user_tier: Literal["free", "vip"] = Header("free"), x_audio_generation_reserved: bool = Header(False)):
     try:
         with tempfile.TemporaryDirectory(prefix="dramaflow_edit_") as directory:
             return await segment_edits.regenerate(owner, str(request.edit_id), str(request.segment_id),
-                                                   request.segment.model_dump(exclude_none=True), directory, x_character_limit)
+                                                   request.segment.model_dump(exclude_none=True), directory, x_character_limit, x_user_tier, x_audio_generation_reserved)
     except HTTPException:
         raise
     except Exception as exc:
