@@ -18,7 +18,7 @@ logger = structlog.get_logger(__name__)
 OBJECT_KEY_PATTERN = re.compile(
     r"^projects/"
     r"(?P<project_id>[A-Za-z0-9][A-Za-z0-9._-]{0,127})/"
-    r"(?P<folder>temp|saved)/"
+    r"(?P<folder>temp|saved|shared)/"
     r"(?P<filename>[A-Za-z0-9][A-Za-z0-9._-]{0,199})"
     r"(?P<extension>\.mp3|\.srt)$"
 )
@@ -28,7 +28,7 @@ BARE_DOMAIN_PATTERN = re.compile(
     r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
     r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 )
-ALLOWED_FOLDERS = {"temp", "saved"}
+ALLOWED_FOLDERS = {"temp", "saved", "shared"}
 
 
 @dataclass(frozen=True)
@@ -279,14 +279,125 @@ class R2Storage:
             )
             raise
 
+    def _copy_artifacts(
+        self,
+        sources: Tuple[R2ObjectReference, ...],
+        *,
+        destination_folder: str,
+        delete_sources: bool,
+    ) -> Tuple[str, ...]:
+        """Copy a validated artifact set and compensate partial destination writes."""
+        if not self.s3_client:
+            raise RuntimeError("R2 Client is not configured")
+        if destination_folder not in ALLOWED_FOLDERS:
+            raise ValueError("Invalid R2 destination folder")
+
+        artifact_id = str(uuid.uuid4())
+        destination_keys = tuple(
+            f"projects/{source.project_id}/{destination_folder}/{artifact_id}{source.extension}"
+            for source in sources
+        )
+        copied_keys = []
+
+        try:
+            for source, destination_key in zip(sources, destination_keys):
+                self.s3_client.copy_object(
+                    Bucket=self.bucket_name,
+                    CopySource={"Bucket": self.bucket_name, "Key": source.key},
+                    Key=destination_key,
+                    ACL="public-read",
+                )
+                copied_keys.append(destination_key)
+        except Exception:
+            for copied_key in copied_keys:
+                try:
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=copied_key,
+                    )
+                except Exception as cleanup_error:
+                    logger.error(
+                        "R2 artifact copy compensation failed",
+                        destination_key=copied_key,
+                        error_type=type(cleanup_error).__name__,
+                    )
+            raise
+
+        if delete_sources:
+            # Destination artifacts are already complete. Source cleanup is
+            # best-effort so a transient delete failure creates only a safe
+            # duplicate instead of turning a successful pair into an error.
+            for source in sources:
+                try:
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=source.key,
+                    )
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "R2 source cleanup deferred",
+                        source_key=source.key,
+                        error_type=type(cleanup_error).__name__,
+                    )
+
+        return tuple(self.build_public_url(key) for key in destination_keys)
+
+    def save_artifact_pair(self, audio_url: str, srt_url: str) -> Tuple[str, str]:
+        """Persist an MP3/SRT pair without exposing a half-saved destination."""
+        audio, subtitles = self.validate_artifact_pair(
+            audio_url,
+            srt_url,
+            allowed_folders={"temp", "saved"},
+        )
+        if audio.folder == "saved":
+            return audio_url, srt_url
+
+        saved_audio, saved_srt = self._copy_artifacts(
+            (audio, subtitles),
+            destination_folder="saved",
+            delete_sources=True,
+        )
+        return saved_audio, saved_srt
+
+    def share_artifacts(
+        self,
+        audio_url: str,
+        srt_url: Optional[str] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Copy an audio artifact and optional subtitles into shared storage."""
+        if srt_url:
+            audio, subtitles = self.validate_artifact_pair(
+                audio_url,
+                srt_url,
+                allowed_folders={"temp", "saved", "shared"},
+            )
+            sources = (audio, subtitles)
+        else:
+            audio = self.parse_public_url(
+                audio_url,
+                expected_extension=".mp3",
+                allowed_folders={"temp", "saved", "shared"},
+            )
+            sources = (audio,)
+
+        if audio.folder == "shared":
+            return audio_url, srt_url
+
+        shared_urls = self._copy_artifacts(
+            sources,
+            destination_folder="shared",
+            delete_sources=False,
+        )
+        return shared_urls[0], shared_urls[1] if len(shared_urls) == 2 else None
+
     def delete_file(self, file_url: str) -> bool:
-        """Delete a validated temporary or saved artifact."""
+        """Delete a validated temporary, saved, or shared artifact."""
         if not self.s3_client:
             raise RuntimeError("R2 Client is not configured")
 
         source = self.parse_public_url(
             file_url,
-            allowed_folders={"temp", "saved"},
+            allowed_folders={"temp", "saved", "shared"},
         )
         try:
             self.s3_client.delete_object(

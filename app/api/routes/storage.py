@@ -1,7 +1,7 @@
 """Cloud artifact lifecycle routes."""
 
 import asyncio
-from typing import Dict
+from typing import Dict, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +12,7 @@ from app.api.schemas import (
     DeleteFilesRequest,
     MoveFilesToTempRequest,
     SaveFilesRequest,
+    ShareFilesRequest,
 )
 from app.services.storage import r2_storage
 
@@ -26,17 +27,9 @@ router = APIRouter(
 @router.post("/save_files", response_model=Dict[str, str])
 async def save_files(request: SaveFilesRequest):
     try:
-        r2_storage.validate_artifact_pair(
+        new_audio_url, new_srt_url = await asyncio.to_thread(
+            r2_storage.save_artifact_pair,
             request.audio_url,
-            request.srt_url,
-            allowed_folders={"temp", "saved"},
-        )
-        new_audio_url = await asyncio.to_thread(
-            r2_storage.save_file_as_new,
-            request.audio_url,
-        )
-        new_srt_url = await asyncio.to_thread(
-            r2_storage.save_file_as_new,
             request.srt_url,
         )
         logger.info("Files saved and isolated")
@@ -49,6 +42,24 @@ async def save_files(request: SaveFilesRequest):
         raise internal_error("save_files_failed") from exc
 
 
+@router.post("/share_files", response_model=Dict[str, Optional[str]])
+async def share_files(request: ShareFilesRequest):
+    try:
+        new_audio_url, new_srt_url = await asyncio.to_thread(
+            r2_storage.share_artifacts,
+            request.audio_url,
+            request.srt_url,
+        )
+        logger.info("Files copied to shared storage")
+        return {"audio_url": new_audio_url, "srt_url": new_srt_url}
+    except ValueError as exc:
+        logger.warning("Share files validation failed", error=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Share files failed", error_type=type(exc).__name__)
+        raise internal_error("share_files_failed") from exc
+
+
 @router.post("/del_files")
 async def delete_files(request: DeleteFilesRequest):
     results = {}
@@ -57,19 +68,19 @@ async def delete_files(request: DeleteFilesRequest):
             r2_storage.validate_artifact_pair(
                 request.audio_url,
                 request.srt_url,
-                allowed_folders={"temp", "saved"},
+                allowed_folders={"temp", "saved", "shared"},
             )
         elif request.audio_url:
             r2_storage.parse_public_url(
                 request.audio_url,
                 expected_extension=".mp3",
-                allowed_folders={"temp", "saved"},
+                allowed_folders={"temp", "saved", "shared"},
             )
         elif request.srt_url:
             r2_storage.parse_public_url(
                 request.srt_url,
                 expected_extension=".srt",
-                allowed_folders={"temp", "saved"},
+                allowed_folders={"temp", "saved", "shared"},
             )
         else:
             raise ValueError("At least one artifact URL is required")

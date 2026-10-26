@@ -49,6 +49,11 @@ class SaveFilesRequest(BaseModel):
     srt_url: str
 
 
+class ShareFilesRequest(BaseModel):
+    audio_url: str
+    srt_url: Optional[str] = None
+
+
 class DeleteFilesRequest(BaseModel):
     audio_url: Optional[str] = None
     srt_url: Optional[str] = None

@@ -23,6 +23,7 @@ from app.api.schemas import (
     MoveFilesToTempRequest,
     ReviewRequest,
     SaveFilesRequest,
+    ShareFilesRequest,
     SynthesizeRequest,
 )
 from app.api.utils import cleanup_temp_directory
@@ -58,6 +59,7 @@ __all__ = [
     "MoveFilesToTempRequest",
     "ReviewRequest",
     "SaveFilesRequest",
+    "ShareFilesRequest",
     "SynthesizeRequest",
     "app",
     "cleanup_temp_directory",

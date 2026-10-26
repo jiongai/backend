@@ -146,7 +146,9 @@ projects/{R2_PROJECT_ID}/temp/{uuid}.mp3
 projects/{R2_PROJECT_ID}/temp/{uuid}.srt
 ```
 
-建议在 R2 配置生命周期规则，自动清理 `projects/{R2_PROJECT_ID}/temp/` 下的过期临时文件；`saved/` 不应使用相同的短期清理规则。
+建议在 R2 配置生命周期规则，在 2 天后自动清理 `projects/{R2_PROJECT_ID}/temp/` 下的过期临时文件；`saved/` 不应配置自动过期。公开分享使用独立的 `shared/` 目录，由应用在分享过期后清理，可额外配置 14 天生命周期作为孤儿文件兜底。
+
+不要在仍有有效公开分享引用 `temp/` 文件时启用短期规则。应先部署 `/share_files` 及对应前端、迁移或等待旧分享过期，再启用 `temp/` 生命周期。
 
 ## 4. 部署配置说明
 

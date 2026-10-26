@@ -80,6 +80,137 @@ class R2StorageTests(unittest.TestCase):
         self.storage.s3_client.copy_object.assert_not_called()
         self.storage.s3_client.delete_object.assert_not_called()
 
+    def test_saving_pair_copies_both_before_cleaning_sources(self):
+        with patch("uuid.uuid4", return_value="saved-pair"):
+            result = self.storage.save_artifact_pair(
+                "https://cdn.example.test/projects/DramaFlow/temp/source.mp3",
+                "https://cdn.example.test/projects/DramaFlow/temp/source.srt",
+            )
+
+        self.assertEqual(
+            self.storage.s3_client.method_calls,
+            [
+                call.copy_object(
+                    Bucket="test-bucket",
+                    CopySource={
+                        "Bucket": "test-bucket",
+                        "Key": "projects/DramaFlow/temp/source.mp3",
+                    },
+                    Key="projects/DramaFlow/saved/saved-pair.mp3",
+                    ACL="public-read",
+                ),
+                call.copy_object(
+                    Bucket="test-bucket",
+                    CopySource={
+                        "Bucket": "test-bucket",
+                        "Key": "projects/DramaFlow/temp/source.srt",
+                    },
+                    Key="projects/DramaFlow/saved/saved-pair.srt",
+                    ACL="public-read",
+                ),
+                call.delete_object(
+                    Bucket="test-bucket",
+                    Key="projects/DramaFlow/temp/source.mp3",
+                ),
+                call.delete_object(
+                    Bucket="test-bucket",
+                    Key="projects/DramaFlow/temp/source.srt",
+                ),
+            ],
+        )
+        self.assertEqual(
+            result,
+            (
+                "https://cdn.example.test/projects/DramaFlow/saved/saved-pair.mp3",
+                "https://cdn.example.test/projects/DramaFlow/saved/saved-pair.srt",
+            ),
+        )
+
+    def test_saving_pair_rolls_back_partial_copy_and_preserves_sources(self):
+        self.storage.s3_client.copy_object.side_effect = [
+            None,
+            RuntimeError("subtitle copy failed"),
+        ]
+
+        with patch("uuid.uuid4", return_value="partial-pair"):
+            with self.assertRaisesRegex(RuntimeError, "subtitle copy failed"):
+                self.storage.save_artifact_pair(
+                    "https://cdn.example.test/projects/DramaFlow/temp/source.mp3",
+                    "https://cdn.example.test/projects/DramaFlow/temp/source.srt",
+                )
+
+        self.storage.s3_client.delete_object.assert_called_once_with(
+            Bucket="test-bucket",
+            Key="projects/DramaFlow/saved/partial-pair.mp3",
+        )
+
+    def test_source_cleanup_failure_keeps_complete_saved_pair_available(self):
+        self.storage.s3_client.delete_object.side_effect = [
+            RuntimeError("temporary source cleanup failed"),
+            None,
+        ]
+
+        with patch("uuid.uuid4", return_value="durable-pair"):
+            result = self.storage.save_artifact_pair(
+                "https://cdn.example.test/projects/DramaFlow/temp/source.mp3",
+                "https://cdn.example.test/projects/DramaFlow/temp/source.srt",
+            )
+
+        self.assertEqual(
+            result,
+            (
+                "https://cdn.example.test/projects/DramaFlow/saved/durable-pair.mp3",
+                "https://cdn.example.test/projects/DramaFlow/saved/durable-pair.srt",
+            ),
+        )
+        self.assertEqual(self.storage.s3_client.copy_object.call_count, 2)
+        self.assertEqual(self.storage.s3_client.delete_object.call_count, 2)
+
+    def test_sharing_pair_copies_both_without_deleting_sources(self):
+        with patch("uuid.uuid4", return_value="shared-pair"):
+            result = self.storage.share_artifacts(
+                "https://cdn.example.test/projects/DramaFlow/temp/source.mp3",
+                "https://cdn.example.test/projects/DramaFlow/temp/source.srt",
+            )
+
+        self.assertEqual(
+            result,
+            (
+                "https://cdn.example.test/projects/DramaFlow/shared/shared-pair.mp3",
+                "https://cdn.example.test/projects/DramaFlow/shared/shared-pair.srt",
+            ),
+        )
+        self.assertEqual(self.storage.s3_client.copy_object.call_count, 2)
+        self.storage.s3_client.delete_object.assert_not_called()
+
+    def test_sharing_audio_only_and_already_shared_files(self):
+        with patch("uuid.uuid4", return_value="shared-audio"):
+            copied = self.storage.share_artifacts(
+                "https://cdn.example.test/projects/DramaFlow/saved/source.mp3"
+            )
+        self.assertEqual(
+            copied,
+            (
+                "https://cdn.example.test/projects/DramaFlow/shared/shared-audio.mp3",
+                None,
+            ),
+        )
+
+        self.storage.s3_client.reset_mock()
+        existing = self.storage.share_artifacts(
+            "https://cdn.example.test/projects/DramaFlow/shared/existing.mp3",
+            "https://cdn.example.test/projects/DramaFlow/shared/existing.srt",
+        )
+        self.assertEqual(
+            existing,
+            (
+                "https://cdn.example.test/projects/DramaFlow/shared/existing.mp3",
+                "https://cdn.example.test/projects/DramaFlow/shared/existing.srt",
+            ),
+        )
+        self.storage.s3_client.copy_object.assert_not_called()
+        self.storage.s3_client.delete_object.assert_not_called()
+
     def test_move_saved_file_to_temp_copies_then_deletes_source(self):
         with patch("uuid.uuid4", return_value="temp-id"):
             result = self.storage.move_file_to_temp(
@@ -125,6 +256,15 @@ class R2StorageTests(unittest.TestCase):
         self.storage.s3_client.delete_object.assert_called_once_with(
             Bucket="test-bucket",
             Key="projects/DramaFlow/temp/source.mp3",
+        )
+
+        self.storage.s3_client.reset_mock()
+        self.assertTrue(self.storage.delete_file(
+            "https://cdn.example.test/projects/DramaFlow/shared/share.mp3"
+        ))
+        self.storage.s3_client.delete_object.assert_called_once_with(
+            Bucket="test-bucket",
+            Key="projects/DramaFlow/shared/share.mp3",
         )
 
     def test_rejects_noncanonical_or_foreign_urls_before_mutation(self):

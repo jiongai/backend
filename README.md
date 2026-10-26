@@ -13,7 +13,7 @@ DramaFlow 是一个将**结构化剧本**转换为多角色有声剧的 FastAPI 
 - 确定性角色选角：根据角色名哈希选择声音，同一角色在相同音色池中保持一致。
 - 供应商原生语速：`pacing` 范围为 `0.25`～`4.0`，只在 TTS 阶段处理，不在后期重复变速。
 - 音频后期：片段间插入 300ms 静音，最终输出 192kbps MP3、SRT 和毫秒级 `timeline`。
-- R2 生命周期：生成文件先进入 `temp`，随后可保存到 `saved`、移回 `temp` 或永久删除。
+- R2 生命周期：生成文件先进入 `temp`，随后可成对保存到 `saved`、复制到 `shared`、移回 `temp` 或永久删除。
 - 安全与可观测性：共享密钥鉴权、请求 ID、结构化日志、凭证脱敏、生产环境安全失败策略。
 
 ## 处理流程
@@ -130,6 +130,7 @@ python -m unittest discover -v
 | `POST` | `/synthesize` | 自动准备剧本、生成 MP3/SRT 并上传 R2 |
 | `POST` | `/review` | 返回单句 MP3 试听流 |
 | `POST` | `/save_files` | 将 `temp` 文件移动到 `saved` |
+| `POST` | `/share_files` | 将音频和可选字幕复制到 `shared` |
 | `POST` | `/move_files_to_temp` | 将 `saved` 文件移回 `temp` |
 | `POST` | `/del_files` | 永久删除一个或一对文件 |
 

@@ -399,7 +399,7 @@ Content-Disposition: attachment; filename="preview.mp3"
 所有文件接口只接受 `R2_PUBLIC_DOMAIN` 下的规范 URL：
 
 ```text
-projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}
+projects/{project_id}/{temp|saved|shared}/{filename}.{mp3|srt}
 ```
 
 以下 URL 会在访问 R2 前被拒绝：
@@ -407,7 +407,7 @@ projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}
 - 外部域名或不同协议。
 - 包含用户名、密码、查询参数或 URL fragment。
 - URL 编码路径、反斜线或非规范路径。
-- `temp` / `saved` 以外的目录。
+- `temp` / `saved` / `shared` 以外的目录。
 - MP3/SRT 扩展名错误。
 - 音频和字幕来自不同项目或不同目录。
 
@@ -415,7 +415,7 @@ projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}
 
 将文件保存到 `saved`：
 
-- 来源为 `temp`：分别复制到新的 `saved` UUID，然后删除临时源文件。
+- 来源为 `temp`：先复制完整的 MP3/SRT 对，两个副本都成功后再尽力删除临时源文件。复制中途失败会回滚已经产生的新副本并保留源文件。
 - 来源为 `saved`：幂等返回原 URL，不创建副本。
 
 请求：
@@ -436,7 +436,27 @@ projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}
 }
 ```
 
-### 5.2 `POST /move_files_to_temp`
+### 5.2 `POST /share_files`
+
+将 MP3 和可选的 SRT 复制到独立的 `shared` 目录，不移动或删除来源文件。来源可以是 `temp`、`saved` 或已经存在的 `shared` 文件；已经位于 `shared` 的请求会幂等返回原 URL。
+
+```json
+{
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/temp/source.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/temp/source.srt"
+}
+```
+
+响应：
+
+```json
+{
+  "audio_url": "https://cdn.example.com/projects/DramaFlow/shared/share-id.mp3",
+  "srt_url": "https://cdn.example.com/projects/DramaFlow/shared/share-id.srt"
+}
+```
+
+### 5.3 `POST /move_files_to_temp`
 
 将一对 `saved` 文件分别移动到新的 `temp` UUID，并删除原文件。
 
@@ -456,9 +476,9 @@ projects/{project_id}/{temp|saved}/{filename}.{mp3|srt}
 }
 ```
 
-### 5.3 `POST /del_files`
+### 5.4 `POST /del_files`
 
-永久删除音频、字幕或两者。至少提供一个 URL。
+永久删除 `temp`、`saved` 或 `shared` 中的音频、字幕或两者。至少提供一个 URL。
 
 ```json
 {
